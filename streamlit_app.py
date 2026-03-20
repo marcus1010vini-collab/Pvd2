@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 from streamlit_gsheets import GSheetsConnection
 from fpdf import FPDF
 import tempfile
@@ -7,21 +8,26 @@ from datetime import datetime
 
 st.set_page_config(page_title="Sistema PDV", page_icon="🏢", layout="centered")
 
-# --- CONEXÃO COM GOOGLE SHEETS ---
-# Essa linha mágica faz a ponte entre o seu app e o seu Google Drive
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- LIGAÇÃO AO GOOGLE SHEETS ---
+try:
+    credenciais = json.loads(st.secrets["segredos_do_google"]["chave"])
+    url_planilha = st.secrets["segredos_do_google"]["planilha"]
+    conn = st.connection("gsheets", type=GSheetsConnection, service_account_info=credenciais)
+except Exception as e:
+    st.warning("A aguardar conexão com o Google Sheets...")
+    st.stop()
 
 def ler_produtos():
-    return conn.read(worksheet="Produtos", ttl=0).dropna(how="all")
+    return conn.read(spreadsheet=url_planilha, worksheet="Produtos", ttl=0).dropna(how="all")
 
 def salvar_produtos(df):
-    conn.update(worksheet="Produtos", data=df)
+    conn.update(spreadsheet=url_planilha, worksheet="Produtos", data=df)
 
 def ler_vendas():
-    return conn.read(worksheet="Vendas", ttl=0).dropna(how="all")
+    return conn.read(spreadsheet=url_planilha, worksheet="Vendas", ttl=0).dropna(how="all")
 
 def salvar_vendas(df):
-    conn.update(worksheet="Vendas", data=df)
+    conn.update(spreadsheet=url_planilha, worksheet="Vendas", data=df)
 
 # --- FUNÇÃO GERADORA DE PDF ---
 def gerar_pdf(cliente, itens, total):
@@ -78,7 +84,7 @@ with aba1:
             df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
     except Exception as e:
-        st.warning("Aguardando conexão com o Google Sheets...")
+        st.warning("A aguardar conexão ao Google Sheets...")
 
 # ================= ABA 2: NOVO PRODUTO =================
 with aba2:
@@ -104,7 +110,7 @@ with aba2:
                 }])
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
                 salvar_produtos(df_atualizado)
-                st.success("✅ Produto salvo direto no Google Sheets!")
+                st.success("✅ Produto salvo diretamente no Google Sheets!")
 
 # ================= ABA 3: AJUSTE MANUAL =================
 with aba3:
@@ -193,7 +199,7 @@ with aba4:
                     idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
                     df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
                     
-                    # Registra a venda
+                    # Registrar a venda
                     novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1
                     custo_total = item['Custo_Un'] * item['Qtd']
                     novas_vendas.append({
@@ -202,13 +208,13 @@ with aba4:
                         'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
                     })
                 
-                # Salva as duas planilhas
+                # Salvar nas duas abas
                 salvar_produtos(df_prod)
                 df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
                 salvar_vendas(df_vendas_atualizado)
                 
                 st.session_state.orcamento_itens = []
-                st.success("🎉 Venda salva na Planilha e estoque atualizado!")
+                st.success("🎉 Venda salva na Nuvem e estoque atualizado!")
                 st.rerun()
                     
             if st.button("🗑️ Limpar Carrinho", use_container_width=True):
@@ -246,3 +252,4 @@ with aba5:
             st.bar_chart(ranking.set_index('Nome_Produto'))
     except:
         st.write("Conecte a planilha para ver os relatórios.")
+
