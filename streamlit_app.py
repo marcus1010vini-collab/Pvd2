@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 from streamlit_gsheets import GSheetsConnection
 from fpdf import FPDF
 import tempfile
@@ -10,12 +11,21 @@ st.set_page_config(page_title="Sistema PDV", page_icon="🏢", layout="centered"
 
 # --- LIGAÇÃO AO GOOGLE SHEETS ---
 try:
-    # O comando strict=False é a mágica que resolve o problema do texto copiado no iPhone
     chave_bruta = st.secrets["segredos_do_google"]["chave"]
     credenciais = json.loads(chave_bruta, strict=False)
     
+    # Truque de Mestre: Salva a chave num arquivo invisível temporário para o Google achar
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+        json.dump(credenciais, f)
+        caminho_chave = f.name
+        
+    # Avisa o sistema onde a chave está escondida
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = caminho_chave
+    
     url_planilha = st.secrets["segredos_do_google"]["planilha"]
-    conn = st.connection("gsheets", type=GSheetsConnection, service_account_info=credenciais)
+    
+    # Conecta (agora ele acha a chave sozinho!)
+    conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
     st.error(f"🚨 Erro na conexão: {e}")
     st.stop()
@@ -87,7 +97,7 @@ with aba1:
             df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
     except Exception as e:
-        st.warning("A aguardar conexão ao Google Sheets...")
+        st.warning(f"A aguardar conexão ao Google Sheets... Erro: {e}")
 
 # ================= ABA 2: NOVO PRODUTO =================
 with aba2:
