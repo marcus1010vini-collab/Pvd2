@@ -252,4 +252,3 @@ with aba5:
             st.bar_chart(ranking.set_index('Nome_Produto'))
     except:
         st.write("Conecte a planilha para ver os relatórios.")
-
