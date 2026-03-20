@@ -14,7 +14,8 @@ try:
     url_planilha = st.secrets["segredos_do_google"]["planilha"]
     conn = st.connection("gsheets", type=GSheetsConnection, service_account_info=credenciais)
 except Exception as e:
-    st.warning("A aguardar conexão com o Google Sheets...")
+    st.error(f"🚨 Erro exato de conexão: {e}")
+    st.info("Tire um print desta tela vermelha e me mande. Assim saberei exatamente qual fio está solto!")
     st.stop()
 
 def ler_produtos():
