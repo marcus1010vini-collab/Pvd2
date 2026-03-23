@@ -13,7 +13,7 @@ st.set_page_config(page_title="RODSTAR", page_icon="⚡", layout="centered")
 # --- TRADUTORES BLINDADOS DE DINHEIRO ---
 def tratar_dinheiro(valor):
     """Lê qualquer coisa que o usuário digitar e transforma no número exato."""
-    v = str(valor).replace('R$', '').strip()
+    v = str(valor).replace('R$', '').replace(' ', '').strip()
     if not v:
         return 0.0
     if '.' in v and ',' in v:
@@ -153,11 +153,13 @@ def processar_venda_callback(itens):
         
         novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1 + len(novas_vendas)
         custo_total = item['Custo_Un'] * item['Qtd']
+        
+        # SALVA COMO TEXTO EXATO NO GOOGLE SHEETS
         novas_vendas.append({
             'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
             'Quantidade': item['Qtd'], 
-            'Custo_Total': custo_total, 
-            'Venda_Total': item['Subtotal'], 
+            'Custo_Total': f"{custo_total:.2f}".replace('.', ','), 
+            'Venda_Total': f"{item['Subtotal']:.2f}".replace('.', ','), 
             'Mes_Ano': mes_atual
         })
     
@@ -216,17 +218,14 @@ with aba1:
         if df_mostrar.empty:
             st.warning("Nenhum produto encontrado com esse nome.")
         else:
-            # Cálculos usando os números reais
             df_mostrar['Custo_Calc'] = df_mostrar['Custo'].apply(tratar_dinheiro)
             df_mostrar['Venda_Calc'] = df_mostrar['Venda'].apply(tratar_dinheiro)
             df_mostrar['Total_Calc'] = df_mostrar['Venda_Calc'] * df_mostrar['Quantidade'].astype(int)
             
-            # Formatação bonita para a tela
             df_mostrar['Custo'] = df_mostrar['Custo_Calc'].apply(formatar_dinheiro)
             df_mostrar['Venda'] = df_mostrar['Venda_Calc'].apply(formatar_dinheiro)
             df_mostrar['Total em Estoque'] = df_mostrar['Total_Calc'].apply(formatar_dinheiro)
             
-            # Remove as colunas de cálculo
             df_mostrar = df_mostrar.drop(columns=['Custo_Calc', 'Venda_Calc', 'Total_Calc'])
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
 
@@ -237,7 +236,6 @@ with aba2:
         nome = st.text_input("Nome do Produto:")
         marca = st.text_input("Marca:")
         
-        # AGORA SÃO CAIXAS DE TEXTO LIVRE! 
         col1, col2 = st.columns(2)
         preco_custo = col1.text_input("Custo (R$):", placeholder="Ex: 15,50")
         preco_venda = col2.text_input("Venda (R$):", placeholder="Ex: 22,50")
@@ -253,11 +251,14 @@ with aba2:
                 df_prod = ler_produtos()
                 novo_id = 1 if df_prod.empty else int(df_prod['ID'].max()) + 1
                 
-                # Salva os números puros e limpos no banco
+                # FORÇA O TEXTO COM VÍRGULA ANTES DE ENVIAR
+                str_custo = f"{tratar_dinheiro(preco_custo):.2f}".replace('.', ',')
+                str_venda = f"{tratar_dinheiro(preco_venda):.2f}".replace('.', ',')
+                
                 novo_produto = pd.DataFrame([{
                     'ID': novo_id, 'Nome': nome, 'Marca': marca, 
-                    'Custo': tratar_dinheiro(preco_custo), 
-                    'Venda': tratar_dinheiro(preco_venda), 
+                    'Custo': str_custo, 
+                    'Venda': str_venda, 
                     'Quantidade': qtd_inicial, 'Alarme': alerta_min
                 }])
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
@@ -283,7 +284,6 @@ with aba3:
             novo_nome = st.text_input("Nome do Produto:", value=str(linha_atual['Nome']))
             nova_marca = st.text_input("Marca:", value=str(linha_atual['Marca']))
             
-            # Puxa o valor formatado com vírgula para a edição
             custo_atual_formatado = f"{tratar_dinheiro(linha_atual['Custo']):.2f}".replace('.', ',')
             venda_atual_formatada = f"{tratar_dinheiro(linha_atual['Venda']):.2f}".replace('.', ',')
             
@@ -296,10 +296,13 @@ with aba3:
             novo_alarme = c4.number_input("Alarme:", value=int(linha_atual['Alarme']), step=1)
             
             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
+                # Permite gravar textos na planilha original sem erros
+                df_prod = df_prod.astype(object)
+                
                 df_prod.at[idx, 'Nome'] = novo_nome
                 df_prod.at[idx, 'Marca'] = nova_marca
-                df_prod.at[idx, 'Custo'] = tratar_dinheiro(novo_custo)
-                df_prod.at[idx, 'Venda'] = tratar_dinheiro(novo_venda)
+                df_prod.at[idx, 'Custo'] = f"{tratar_dinheiro(novo_custo):.2f}".replace('.', ',')
+                df_prod.at[idx, 'Venda'] = f"{tratar_dinheiro(novo_venda):.2f}".replace('.', ',')
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
                 df_prod.at[idx, 'Alarme'] = novo_alarme
                 
@@ -391,7 +394,6 @@ with aba4:
             
             col_preco, col_sub, col_del = st.columns([3, 3, 2])
             
-            # Caixa de texto livre para editar o preço no carrinho
             preco_edit_str = col_preco.text_input("Preço Un.", value=f"{item['Preco_Un']:.2f}".replace('.', ','), key=f"preco_edit_{i}")
             novo_preco_float = tratar_dinheiro(preco_edit_str)
             
