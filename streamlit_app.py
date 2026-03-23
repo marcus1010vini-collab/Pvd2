@@ -10,6 +10,21 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="RODSTAR", page_icon="⚡", layout="centered")
 
+# --- TRADUTOR DE NÚMEROS (EUA -> BRASIL) ---
+def to_float(valor):
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    if isinstance(valor, str):
+        valor = valor.replace('R$', '').strip()
+        if ',' in valor and '.' in valor:
+            valor = valor.replace('.', '')
+        valor = valor.replace(',', '.')
+        try:
+            return float(valor)
+        except:
+            return 0.0
+    return 0.0
+
 # --- LIGAÇÃO NATIVA E DIRETA AO GOOGLE SHEETS ---
 try:
     chave_bruta = st.secrets["segredos_do_google"]["chave"]
@@ -79,7 +94,6 @@ def gerar_pdf(cliente_nome, itens, total):
     pdf = FPDF()
     pdf.add_page()
     
-    # 1. Cabeçalho da Empresa
     pdf.set_font("Arial", 'B', 18)
     pdf.cell(0, 8, "RODSTAR", ln=True, align="C")
     
@@ -88,7 +102,6 @@ def gerar_pdf(cliente_nome, itens, total):
     pdf.cell(0, 5, "Endereco: Rua Pedro Americo, 55 - Bairro Pioneiros", ln=True, align="C")
     pdf.ln(5)
     
-    # 2. Título e Cliente
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "ORCAMENTO / RECIBO", ln=True, align="C")
     pdf.set_font("Arial", '', 12)
@@ -96,7 +109,6 @@ def gerar_pdf(cliente_nome, itens, total):
     pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
     pdf.cell(0, 5, "-"*40, ln=True)
     
-    # 3. Tabela de Produtos
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(15, 8, "Qtd", border=1)
     pdf.cell(85, 8, "Produto", border=1)
@@ -135,8 +147,10 @@ def processar_venda_callback(itens):
         custo_total = item['Custo_Un'] * item['Qtd']
         novas_vendas.append({
             'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
-            'Quantidade': item['Qtd'], 'Custo_Total': custo_total, 
-            'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
+            'Quantidade': item['Qtd'], 
+            'Custo_Total': f"{custo_total:.2f}".replace('.', ','), 
+            'Venda_Total': f"{item['Subtotal']:.2f}".replace('.', ','), 
+            'Mes_Ano': mes_atual
         })
     
     salvar_produtos(df_prod)
@@ -194,10 +208,18 @@ with aba1:
         if df_mostrar.empty:
             st.warning("Nenhum produto encontrado com esse nome.")
         else:
-            df_mostrar['Total em Estoque'] = df_mostrar['Venda'].astype(float) * df_mostrar['Quantidade'].astype(int)
-            df_mostrar['Custo'] = df_mostrar['Custo'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-            df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-            df_mostrar['Total em Estoque'] = df_mostrar['Total em Estoque'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+            # Faz a matemática correta usando a conversão
+            df_mostrar['Custo_Num'] = df_mostrar['Custo'].apply(to_float)
+            df_mostrar['Venda_Num'] = df_mostrar['Venda'].apply(to_float)
+            df_mostrar['Total em Estoque'] = df_mostrar['Venda_Num'] * df_mostrar['Quantidade'].astype(int)
+            
+            # Formata de volta para aparecer bonito na tela
+            df_mostrar['Custo'] = df_mostrar['Custo_Num'].apply(lambda x: f"R$ {x:.2f}".replace('.', ','))
+            df_mostrar['Venda'] = df_mostrar['Venda_Num'].apply(lambda x: f"R$ {x:.2f}".replace('.', ','))
+            df_mostrar['Total em Estoque'] = df_mostrar['Total em Estoque'].apply(lambda x: f"R$ {x:.2f}".replace('.', ','))
+            
+            # Remove as colunas temporárias de matemática
+            df_mostrar = df_mostrar.drop(columns=['Custo_Num', 'Venda_Num'])
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
 
 # ================= ABA 2: NOVO PRODUTO =================
@@ -214,7 +236,7 @@ with aba2:
         st.markdown("**Configurações de Estoque**")
         col3, col4 = st.columns(2)
         qtd_inicial = col3.number_input("Estoque Inicial:", min_value=0, step=1)
-        alerta_min = col4.number_input("🚨 Disparar Alarme se chegar a:", min_value=0, step=1, help="O sistema avisará se o estoque chegar neste número.")
+        alerta_min = col4.number_input("🚨 Disparar Alarme se chegar a:", min_value=0, step=1)
         
         if st.form_submit_button("Salvar Produto", use_container_width=True):
             if nome:
@@ -222,7 +244,8 @@ with aba2:
                 novo_id = 1 if df_prod.empty else int(df_prod['ID'].max()) + 1
                 novo_produto = pd.DataFrame([{
                     'ID': novo_id, 'Nome': nome, 'Marca': marca, 
-                    'Custo': preco_custo, 'Venda': preco_venda, 
+                    'Custo': f"{preco_custo:.2f}".replace('.', ','), 
+                    'Venda': f"{preco_venda:.2f}".replace('.', ','), 
                     'Quantidade': qtd_inicial, 'Alarme': alerta_min
                 }])
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
@@ -249,8 +272,8 @@ with aba3:
             nova_marca = st.text_input("Marca:", value=str(linha_atual['Marca']))
             
             c1, c2 = st.columns(2)
-            novo_custo = c1.number_input("Custo (R$):", value=float(linha_atual['Custo']), step=0.50, format="%.2f")
-            novo_venda = c2.number_input("Venda (R$):", value=float(linha_atual['Venda']), step=0.50, format="%.2f")
+            novo_custo = c1.number_input("Custo (R$):", value=to_float(linha_atual['Custo']), step=0.50, format="%.2f")
+            novo_venda = c2.number_input("Venda (R$):", value=to_float(linha_atual['Venda']), step=0.50, format="%.2f")
             
             c3, c4 = st.columns(2)
             nova_qtd = c3.number_input("Estoque Atual:", value=int(linha_atual['Quantidade']), step=1)
@@ -259,8 +282,8 @@ with aba3:
             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
                 df_prod.at[idx, 'Nome'] = novo_nome
                 df_prod.at[idx, 'Marca'] = nova_marca
-                df_prod.at[idx, 'Custo'] = novo_custo
-                df_prod.at[idx, 'Venda'] = novo_venda
+                df_prod.at[idx, 'Custo'] = f"{novo_custo:.2f}".replace('.', ',')
+                df_prod.at[idx, 'Venda'] = f"{novo_venda:.2f}".replace('.', ',')
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
                 df_prod.at[idx, 'Alarme'] = novo_alarme
                 
@@ -331,8 +354,8 @@ with aba4:
                 else:
                     st.session_state.orcamento_itens.append({
                         "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
-                        "Custo_Un": float(dados_prod['Custo']), "Preco_Un": float(dados_prod['Venda']),
-                        "Subtotal": float(dados_prod['Venda']) * qtd_orc
+                        "Custo_Un": to_float(dados_prod['Custo']), "Preco_Un": to_float(dados_prod['Venda']),
+                        "Subtotal": to_float(dados_prod['Venda']) * qtd_orc
                     })
                     st.success("Adicionado!")
                 
@@ -410,8 +433,8 @@ with aba5:
         mes_selecionado = st.selectbox("Selecione o Mês:", meses)
         
         dados_mes = df_vendas[df_vendas['Mes_Ano'] == mes_selecionado]
-        faturamento = dados_mes['Venda_Total'].astype(float).sum()
-        custo = dados_mes['Custo_Total'].astype(float).sum()
+        faturamento = dados_mes['Venda_Total'].apply(to_float).sum()
+        custo = dados_mes['Custo_Total'].apply(to_float).sum()
         lucro = faturamento - custo
         
         st.metric("Faturamento Mensal", f"R$ {faturamento:.2f}")
@@ -421,38 +444,39 @@ with aba5:
         
         st.write("---")
         
-        ranking = dados_mes.groupby('Nome_Produto').agg({
-            'Quantidade': 'sum',
-            'Venda_Total': 'sum'
+        # Faz a matemática correta para o ranking
+        dados_mes_calc = dados_mes.copy()
+        dados_mes_calc['Venda_Total_Num'] = dados_mes_calc['Venda_Total'].apply(to_float)
+        dados_mes_calc['Quantidade_Num'] = dados_mes_calc['Quantidade'].astype(int)
+        
+        ranking = dados_mes_calc.groupby('Nome_Produto').agg({
+            'Quantidade_Num': 'sum',
+            'Venda_Total_Num': 'sum'
         }).reset_index()
         
         st.write("📈 **Top Produtos MAIS Vendidos**")
-        mais_vendidos = ranking.sort_values(by='Quantidade', ascending=False).head(10)
-        mais_vendidos['Venda_Total'] = mais_vendidos['Venda_Total'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-        st.dataframe(mais_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade': 'Qtd Vendida', 'Venda_Total': 'Receita (R$)'}), hide_index=True, use_container_width=True)
+        mais_vendidos = ranking.sort_values(by='Quantidade_Num', ascending=False).head(10)
+        mais_vendidos['Venda_Total_Num'] = mais_vendidos['Venda_Total_Num'].apply(lambda x: f"R$ {x:.2f}".replace('.', ','))
+        st.dataframe(mais_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade_Num': 'Qtd Vendida', 'Venda_Total_Num': 'Receita (R$)'}), hide_index=True, use_container_width=True)
         
         st.write("---")
         st.write("📉 **Top Produtos MENOS Vendidos**")
-        menos_vendidos = ranking.sort_values(by='Quantidade', ascending=True).head(10)
-        menos_vendidos['Venda_Total'] = menos_vendidos['Venda_Total'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-        st.dataframe(menos_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade': 'Qtd Vendida', 'Venda_Total': 'Receita (R$)'}), hide_index=True, use_container_width=True)
+        menos_vendidos = ranking.sort_values(by='Quantidade_Num', ascending=True).head(10)
+        menos_vendidos['Venda_Total_Num'] = menos_vendidos['Venda_Total_Num'].apply(lambda x: f"R$ {x:.2f}".replace('.', ','))
+        st.dataframe(menos_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade_Num': 'Qtd Vendida', 'Venda_Total_Num': 'Receita (R$)'}), hide_index=True, use_container_width=True)
         
         st.write("---")
         st.write("📊 **Gráfico Visual de Vendas**")
-        st.bar_chart(ranking.set_index('Nome_Produto')['Quantidade'])
+        st.bar_chart(ranking.set_index('Nome_Produto')['Quantidade_Num'])
 
-        # --- ZONA DE PERIGO: LIMPAR GRÁFICOS E VENDAS ---
         st.write("---")
         with st.expander("⚠️ Área de Risco: Limpar Histórico de Vendas"):
             st.error("Atenção! Ao clicar aqui, você apagará **TODAS AS VENDAS** já registradas no sistema. Seus gráficos e relatórios serão zerados.")
             
-            # Primeira trava de segurança
             confirmar_exclusao = st.checkbox("Eu entendo que esta ação é irreversível e quero apagar os dados.")
             
-            # Só mostra o botão se a caixinha estiver marcada
             if confirmar_exclusao:
                 if st.button("🗑️ Excluir Todo o Histórico", type="primary", use_container_width=True):
-                    # Limpa a aba e recria apenas o cabeçalho
                     aba_vendas.clear()
                     cabecalho = [['ID', 'Produto_ID', 'Nome_Produto', 'Quantidade', 'Custo_Total', 'Venda_Total', 'Mes_Ano']]
                     try:
