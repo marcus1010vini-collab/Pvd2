@@ -135,13 +135,33 @@ st.markdown("""
 
 aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "✏️ Editar", "📝 Vender", "📈 Gráficos"])
 
-# ================= ABA 1: ESTOQUE =================
+# ================= ABA 1: ESTOQUE E ALERTAS =================
 with aba1:
-    st.subheader("Estoque Atual")
     df = ler_produtos()
     if df.empty:
         st.info("Nenhum produto cadastrado na planilha.")
     else:
+        # 🚨 PAINEL DE ALERTAS DE ESTOQUE BAIXO NO TOPO
+        st.subheader("⚠️ Alertas de Estoque")
+        
+        # Converte para número para poder fazer a matemática
+        df['Qtd_Num'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0)
+        df['Alarme_Num'] = pd.to_numeric(df['Alarme'], errors='coerce').fillna(0)
+        
+        # A Mágica do Alerta: Pega produtos menores que o Alarme OU menores que 1
+        df_alertas = df[(df['Qtd_Num'] <= df['Alarme_Num']) | (df['Qtd_Num'] <= 1)].copy()
+        
+        if df_alertas.empty:
+            st.success("✅ Estoque saudável! Nenhum produto em falta ou atingiu o alarme.")
+        else:
+            st.error("Os produtos abaixo atingiram o limite de alarme ou estão quase esgotados:")
+            df_alertas_mostrar = df_alertas[['Nome', 'Marca', 'Quantidade', 'Alarme']].copy()
+            st.dataframe(df_alertas_mostrar, use_container_width=True, hide_index=True)
+            
+        st.write("---")
+        
+        # 📦 ESTOQUE GERAL ABAIXO DOS ALERTAS
+        st.subheader("📦 Estoque Completo")
         pesquisa = st.text_input("🔍 Pesquisar produto por nome:", "")
         df_mostrar = df[['Nome', 'Marca', 'Custo', 'Venda', 'Quantidade']].copy()
         
@@ -166,9 +186,13 @@ with aba2:
         col1, col2 = st.columns(2)
         preco_custo = col1.number_input("Custo (R$):", min_value=0.0, step=0.50, format="%.2f")
         preco_venda = col2.number_input("Venda (R$):", min_value=0.0, step=0.50, format="%.2f")
+        
+        # CAMPO DO ALARME BEM VISÍVEL AQUI
+        st.write("---")
+        st.markdown("**Configurações de Estoque**")
         col3, col4 = st.columns(2)
         qtd_inicial = col3.number_input("Estoque Inicial:", min_value=0, step=1)
-        alerta_min = col4.number_input("Alarme:", min_value=0, step=1)
+        alerta_min = col4.number_input("🚨 Disparar Alarme se chegar a:", min_value=0, step=1, help="O sistema avisará se o estoque chegar neste número.")
         
         if st.form_submit_button("Salvar Produto", use_container_width=True):
             if nome:
@@ -240,10 +264,8 @@ with aba4:
     
     df_prod = ler_produtos()
     if not df_prod.empty:
-        # LUPA DE PESQUISA NA VENDA
         pesquisa_venda = st.text_input("🔍 Buscar produto para vender:", key="busca_venda")
         
-        # Filtra os produtos com base no que foi digitado
         if pesquisa_venda:
             df_venda_filtrado = df_prod[df_prod['Nome'].str.contains(pesquisa_venda, case=False, na=False)]
         else:
@@ -264,7 +286,7 @@ with aba4:
             except:
                 alarme_configurado = 0
                 
-            # 🚨 SISTEMA DE ALERTAS
+            # 🚨 SISTEMA DE ALERTAS NA VENDA
             if estoque_atual == 0:
                 st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
             elif estoque_atual == 1:
@@ -379,7 +401,6 @@ with aba5:
         custo = dados_mes['Custo_Total'].astype(float).sum()
         lucro = faturamento - custo
         
-        # Cartões de Resumo Financeiro
         st.metric("Faturamento Mensal", f"R$ {faturamento:.2f}")
         c_m1, c_m2 = st.columns(2)
         c_m1.metric("Custo da Mercadoria", f"R$ {custo:.2f}")
@@ -387,7 +408,6 @@ with aba5:
         
         st.write("---")
         
-        # Tabela unificada de ranqueamento
         ranking = dados_mes.groupby('Nome_Produto').agg({
             'Quantidade': 'sum',
             'Venda_Total': 'sum'
