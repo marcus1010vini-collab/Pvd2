@@ -31,7 +31,7 @@ except Exception as e:
     st.error(f"🚨 Erro de Autenticação: {e}")
     st.stop()
 
-# --- MEMÓRIA CACHE (EVITA O ERRO 429 DO GOOGLE) ---
+# --- MEMÓRIA CACHE ---
 @st.cache_data(ttl=30, show_spinner=False)
 def ler_produtos():
     try:
@@ -51,7 +51,7 @@ def salvar_produtos(df):
         aba_produtos.update(values=dados, range_name="A1")
     except TypeError:
         aba_produtos.update("A1", dados)
-    ler_produtos.clear() # Avisa a memória que os dados mudaram!
+    st.cache_data.clear() # Força a memória a limpar imediatamente após uma edição!
 
 @st.cache_data(ttl=30, show_spinner=False)
 def ler_vendas():
@@ -72,7 +72,7 @@ def salvar_vendas(df):
         aba_vendas.update(values=dados, range_name="A1")
     except TypeError:
         aba_vendas.update("A1", dados)
-    ler_vendas.clear() # Avisa a memória que uma venda nova entrou!
+    st.cache_data.clear()
 
 # --- FUNÇÃO GERADORA DE PDF ---
 def gerar_pdf(cliente_nome, itens, total):
@@ -142,9 +142,27 @@ with aba1:
     if df.empty:
         st.info("Nenhum produto cadastrado na planilha.")
     else:
-        df_mostrar = df[['Nome', 'Marca', 'Venda', 'Quantidade']].copy()
-        df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+        # LUPA DE PESQUISA
+        pesquisa = st.text_input("🔍 Pesquisar produto por nome:", "")
+        
+        df_mostrar = df[['Nome', 'Marca', 'Custo', 'Venda', 'Quantidade']].copy()
+        
+        # Filtra a tabela se algo for digitado
+        if pesquisa:
+            df_mostrar = df_mostrar[df_mostrar['Nome'].str.contains(pesquisa, case=False, na=False)]
+            
+        if df_mostrar.empty:
+            st.warning("Nenhum produto encontrado com esse nome.")
+        else:
+            # Calcula o valor total parado no estoque
+            df_mostrar['Total em Estoque'] = df_mostrar['Venda'].astype(float) * df_mostrar['Quantidade'].astype(int)
+            
+            # Formata os números para Real (R$)
+            df_mostrar['Custo'] = df_mostrar['Custo'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+            df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+            df_mostrar['Total em Estoque'] = df_mostrar['Total em Estoque'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+            
+            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
 
 # ================= ABA 2: NOVO PRODUTO =================
 with aba2:
