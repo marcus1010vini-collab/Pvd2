@@ -51,7 +51,7 @@ def salvar_produtos(df):
         aba_produtos.update(values=dados, range_name="A1")
     except TypeError:
         aba_produtos.update("A1", dados)
-    st.cache_data.clear() # Força a memória a limpar imediatamente após uma edição!
+    st.cache_data.clear()
 
 @st.cache_data(ttl=30, show_spinner=False)
 def ler_vendas():
@@ -142,26 +142,19 @@ with aba1:
     if df.empty:
         st.info("Nenhum produto cadastrado na planilha.")
     else:
-        # LUPA DE PESQUISA
         pesquisa = st.text_input("🔍 Pesquisar produto por nome:", "")
-        
         df_mostrar = df[['Nome', 'Marca', 'Custo', 'Venda', 'Quantidade']].copy()
         
-        # Filtra a tabela se algo for digitado
         if pesquisa:
             df_mostrar = df_mostrar[df_mostrar['Nome'].str.contains(pesquisa, case=False, na=False)]
             
         if df_mostrar.empty:
             st.warning("Nenhum produto encontrado com esse nome.")
         else:
-            # Calcula o valor total parado no estoque
             df_mostrar['Total em Estoque'] = df_mostrar['Venda'].astype(float) * df_mostrar['Quantidade'].astype(int)
-            
-            # Formata os números para Real (R$)
             df_mostrar['Custo'] = df_mostrar['Custo'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
             df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
             df_mostrar['Total em Estoque'] = df_mostrar['Total em Estoque'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-            
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
 
 # ================= ABA 2: NOVO PRODUTO =================
@@ -193,7 +186,7 @@ with aba2:
 
 # ================= ABA 3: EDITAR PRODUTO =================
 with aba3:
-    st.subheader("Editar Dados do Produto")
+    st.subheader("Editar ou Excluir Produto")
     df_prod = ler_produtos()
     
     if not df_prod.empty:
@@ -228,53 +221,73 @@ with aba3:
                 salvar_produtos(df_prod)
                 st.success("✅ Produto atualizado com sucesso!")
                 st.rerun()
+                
+        st.write("---")
+        with st.expander("⚠️ Área de Risco: Excluir Produto"):
+            st.warning(f"Você está prestes a apagar o produto **{linha_atual['Nome']}** do sistema permanentemente.")
+            if st.button("🗑️ Sim, apagar este produto", type="primary", use_container_width=True):
+                df_prod = df_prod.drop(index=idx)
+                salvar_produtos(df_prod)
+                st.success("🗑️ Produto excluído com sucesso!")
+                st.rerun()
     else:
         st.info("Cadastre um produto primeiro para poder editá-lo.")
 
 # ================= ABA 4: VENDER / CARRINHO / PDF =================
 with aba4:
     st.subheader("Orçamento e Venda")
-    
     nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva", key="cliente_venda_memoria")
     
     df_prod = ler_produtos()
     if not df_prod.empty:
-        opcoes_orc = dict(zip(df_prod['Nome'], df_prod.to_dict('records')))
-        c_prod, c_qtd = st.columns([2, 1])
-        prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
+        # LUPA DE PESQUISA NA VENDA
+        pesquisa_venda = st.text_input("🔍 Buscar produto para vender:", key="busca_venda")
         
-        dados_prod = opcoes_orc[prod_selecionado]
-        estoque_atual = int(dados_prod['Quantidade'])
-        
-        try:
-            alarme_configurado = int(dados_prod['Alarme'])
-        except:
-            alarme_configurado = 0
+        # Filtra os produtos com base no que foi digitado
+        if pesquisa_venda:
+            df_venda_filtrado = df_prod[df_prod['Nome'].str.contains(pesquisa_venda, case=False, na=False)]
+        else:
+            df_venda_filtrado = df_prod
             
-        # 🚨 SISTEMA DE ALERTAS
-        if estoque_atual == 0:
-            st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
-        elif estoque_atual == 1:
-            st.warning("⚠️ ATENÇÃO: Resta apenas 1 unidade no estoque!")
-        elif estoque_atual <= alarme_configurado:
-            st.warning(f"⚠️ ESTOQUE BAIXO: Restam apenas {estoque_atual} unidades.")
-
-        # 🔒 BLOQUEIO DA QUANTIDADE MÁXIMA
-        max_permitido = estoque_atual if estoque_atual > 0 else 1
-        qtd_orc = c_qtd.number_input("Qtd:", min_value=1, max_value=max_permitido, step=1, key="qtd_orc")
+        if df_venda_filtrado.empty:
+            st.warning("Nenhum produto encontrado com esse nome.")
+        else:
+            opcoes_orc = dict(zip(df_venda_filtrado['Nome'], df_venda_filtrado.to_dict('records')))
+            c_prod, c_qtd = st.columns([2, 1])
+            prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
             
-        if st.button("➕ Adicionar ao Carrinho", use_container_width=True):
+            dados_prod = opcoes_orc[prod_selecionado]
+            estoque_atual = int(dados_prod['Quantidade'])
+            
+            try:
+                alarme_configurado = int(dados_prod['Alarme'])
+            except:
+                alarme_configurado = 0
+                
+            # 🚨 SISTEMA DE ALERTAS
             if estoque_atual == 0:
-                st.error("Não é possível adicionar um produto esgotado!")
-            elif qtd_orc > estoque_atual:
-                st.error(f"Estoque insuficiente! Só restam {estoque_atual} unidades.")
-            else:
-                st.session_state.orcamento_itens.append({
-                    "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
-                    "Custo_Un": float(dados_prod['Custo']), "Preco_Un": float(dados_prod['Venda']),
-                    "Subtotal": float(dados_prod['Venda']) * qtd_orc
-                })
-                st.success("Adicionado!")
+                st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
+            elif estoque_atual == 1:
+                st.warning("⚠️ ATENÇÃO: Resta apenas 1 unidade no estoque!")
+            elif estoque_atual <= alarme_configurado:
+                st.warning(f"⚠️ ESTOQUE BAIXO: Restam apenas {estoque_atual} unidades.")
+
+            # 🔒 BLOQUEIO DA QUANTIDADE MÁXIMA
+            max_permitido = estoque_atual if estoque_atual > 0 else 1
+            qtd_orc = c_qtd.number_input("Qtd:", min_value=1, max_value=max_permitido, step=1, key="qtd_orc")
+                
+            if st.button("➕ Adicionar ao Carrinho", use_container_width=True):
+                if estoque_atual == 0:
+                    st.error("Não é possível adicionar um produto esgotado!")
+                elif qtd_orc > estoque_atual:
+                    st.error(f"Estoque insuficiente! Só restam {estoque_atual} unidades.")
+                else:
+                    st.session_state.orcamento_itens.append({
+                        "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
+                        "Custo_Un": float(dados_prod['Custo']), "Preco_Un": float(dados_prod['Venda']),
+                        "Subtotal": float(dados_prod['Venda']) * qtd_orc
+                    })
+                    st.success("Adicionado!")
                 
     # MOSTRA O CARRINHO COM DESTAQUE E EDIÇÃO
     if st.session_state.orcamento_itens:
@@ -353,7 +366,7 @@ with aba4:
 
 # ================= ABA 5: GRÁFICOS E RELATÓRIOS =================
 with aba5:
-    st.subheader("Desempenho e Gráficos")
+    st.subheader("Desempenho e Inteligência")
     df_vendas = ler_vendas()
     if df_vendas.empty:
         st.info("Nenhuma venda finalizada ainda.")
@@ -366,14 +379,31 @@ with aba5:
         custo = dados_mes['Custo_Total'].astype(float).sum()
         lucro = faturamento - custo
         
+        # Cartões de Resumo Financeiro
         st.metric("Faturamento Mensal", f"R$ {faturamento:.2f}")
         c_m1, c_m2 = st.columns(2)
-        c_m1.metric("Custo Mercadoria", f"R$ {custo:.2f}")
+        c_m1.metric("Custo da Mercadoria", f"R$ {custo:.2f}")
         c_m2.metric("Lucro Bruto", f"R$ {lucro:.2f}")
         
         st.write("---")
-        st.write("📊 **Gráfico: Produtos Mais Vendidos**")
         
-        ranking = dados_mes.groupby('Nome_Produto')['Quantidade'].sum().reset_index()
-        ranking = ranking.sort_values(by='Quantidade', ascending=False)
-        st.bar_chart(ranking.set_index('Nome_Produto'))
+        # Tabela unificada de ranqueamento
+        ranking = dados_mes.groupby('Nome_Produto').agg({
+            'Quantidade': 'sum',
+            'Venda_Total': 'sum'
+        }).reset_index()
+        
+        st.write("📈 **Top Produtos MAIS Vendidos**")
+        mais_vendidos = ranking.sort_values(by='Quantidade', ascending=False).head(10)
+        mais_vendidos['Venda_Total'] = mais_vendidos['Venda_Total'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+        st.dataframe(mais_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade': 'Qtd Vendida', 'Venda_Total': 'Receita (R$)'}), hide_index=True, use_container_width=True)
+        
+        st.write("---")
+        st.write("📉 **Top Produtos MENOS Vendidos**")
+        menos_vendidos = ranking.sort_values(by='Quantidade', ascending=True).head(10)
+        menos_vendidos['Venda_Total'] = menos_vendidos['Venda_Total'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+        st.dataframe(menos_vendidos.rename(columns={'Nome_Produto': 'Produto', 'Quantidade': 'Qtd Vendida', 'Venda_Total': 'Receita (R$)'}), hide_index=True, use_container_width=True)
+        
+        st.write("---")
+        st.write("📊 **Gráfico Visual de Vendas**")
+        st.bar_chart(ranking.set_index('Nome_Produto')['Quantidade'])
