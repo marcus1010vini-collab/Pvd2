@@ -1,62 +1,90 @@
 import streamlit as st
 import pandas as pd
 import json
-import os
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import tempfile
 from datetime import datetime
 
 st.set_page_config(page_title="Sistema PDV", page_icon="🏢", layout="centered")
 
-# --- LIGAÇÃO AO GOOGLE SHEETS ---
+# --- LIGAÇÃO NATIVA E DIRETA AO GOOGLE SHEETS ---
 try:
     chave_bruta = st.secrets["segredos_do_google"]["chave"]
     credenciais = json.loads(chave_bruta, strict=False)
-    
-    # Truque de Mestre: Salva a chave num arquivo invisível temporário para o Google achar
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-        json.dump(credenciais, f)
-        caminho_chave = f.name
-        
-    # Avisa o sistema onde a chave está escondida
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = caminho_chave
-    
     url_planilha = st.secrets["segredos_do_google"]["planilha"]
     
-    # Conecta (agora ele acha a chave sozinho!)
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    # Apresenta o "crachá" oficial ao Google
+    escopos = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(credenciais, scopes=escopos)
+    cliente = gspread.authorize(creds)
+    
+    # Entra na planilha com autorização VIP
+    planilha = cliente.open_by_url(url_planilha)
+    aba_produtos = planilha.worksheet("Produtos")
+    aba_vendas = planilha.worksheet("Vendas")
+    
 except Exception as e:
-    st.error(f"🚨 Erro na conexão: {e}")
+    st.error(f"🚨 Erro de Autenticação: {e}")
     st.stop()
 
 def ler_produtos():
-    return conn.read(spreadsheet=url_planilha, worksheet="Produtos", ttl=0).dropna(how="all")
+    try:
+        dados = aba_produtos.get_all_records()
+        if not dados:
+            return pd.DataFrame(columns=['ID', 'Nome', 'Marca', 'Custo', 'Venda', 'Quantidade', 'Alarme'])
+        return pd.DataFrame(dados)
+    except Exception:
+        return pd.DataFrame(columns=['ID', 'Nome', 'Marca', 'Custo', 'Venda', 'Quantidade', 'Alarme'])
 
 def salvar_produtos(df):
-    conn.update(spreadsheet=url_planilha, worksheet="Produtos", data=df)
+    df_save = df.copy()
+    df_save.fillna("", inplace=True)
+    dados = [df_save.columns.values.tolist()] + df_save.values.tolist()
+    aba_produtos.clear()
+    try:
+        aba_produtos.update(values=dados, range_name="A1")
+    except TypeError:
+        aba_produtos.update("A1", dados)
 
 def ler_vendas():
-    return conn.read(spreadsheet=url_planilha, worksheet="Vendas", ttl=0).dropna(how="all")
+    try:
+        dados = aba_vendas.get_all_records()
+        if not dados:
+            return pd.DataFrame(columns=['ID', 'Produto_ID', 'Nome_Produto', 'Quantidade', 'Custo_Total', 'Venda_Total', 'Mes_Ano'])
+        return pd.DataFrame(dados)
+    except Exception:
+        return pd.DataFrame(columns=['ID', 'Produto_ID', 'Nome_Produto', 'Quantidade', 'Custo_Total', 'Venda_Total', 'Mes_Ano'])
 
 def salvar_vendas(df):
-    conn.update(spreadsheet=url_planilha, worksheet="Vendas", data=df)
+    df_save = df.copy()
+    df_save.fillna("", inplace=True)
+    dados = [df_save.columns.values.tolist()] + df_save.values.tolist()
+    aba_vendas.clear()
+    try:
+        aba_vendas.update(values=dados, range_name="A1")
+    except TypeError:
+        aba_vendas.update("A1", dados)
 
 # --- FUNÇÃO GERADORA DE PDF ---
-def gerar_pdf(cliente, itens, total):
+def gerar_pdf(cliente_nome, itens, total):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, "ORCAMENTO / PEDIDO", ln=True, align="C")
     pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, f"Cliente: {cliente}", ln=True)
+    pdf.cell(0, 10, f"Cliente: {cliente_nome}", ln=True)
     pdf.cell(0, 10, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
     pdf.cell(0, 10, "-"*40, ln=True)
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(15, 8, "Qtd", border=1)
     pdf.cell(85, 8, "Produto", border=1)
-    pdf.cell(45, 8, "Vlr. Unitario", border=1)
+    pdf.cell(45, 8, "Vlr. Unit", border=1)
     pdf.cell(45, 8, "Subtotal", border=1, ln=True)
     
     pdf.set_font("Arial", '', 10)
@@ -88,16 +116,13 @@ aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "🔄 Ajuste
 # ================= ABA 1: ESTOQUE =================
 with aba1:
     st.subheader("Estoque Atual")
-    try:
-        df = ler_produtos()
-        if df.empty:
-            st.info("Nenhum produto cadastrado na planilha.")
-        else:
-            df_mostrar = df[['Nome', 'Marca', 'Venda', 'Quantidade']].copy()
-            df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
-            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-    except Exception as e:
-        st.warning(f"A aguardar conexão ao Google Sheets... Erro: {e}")
+    df = ler_produtos()
+    if df.empty:
+        st.info("Nenhum produto cadastrado na planilha.")
+    else:
+        df_mostrar = df[['Nome', 'Marca', 'Venda', 'Quantidade']].copy()
+        df_mostrar['Venda'] = df_mostrar['Venda'].apply(lambda x: f"R$ {float(x):.2f}".replace('.', ','))
+        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
 
 # ================= ABA 2: NOVO PRODUTO =================
 with aba2:
@@ -128,140 +153,133 @@ with aba2:
 # ================= ABA 3: AJUSTE MANUAL =================
 with aba3:
     st.subheader("Entrada e Perdas")
-    try:
-        df_prod = ler_produtos()
-        if not df_prod.empty:
-            opcoes = dict(zip(df_prod['Nome'], df_prod['ID']))
-            prod_sel = st.selectbox("Produto:", list(opcoes.keys()), key="ajuste_prod")
-            qtd_mov = st.number_input("Qtd:", min_value=1, step=1)
+    df_prod = ler_produtos()
+    if not df_prod.empty:
+        opcoes = dict(zip(df_prod['Nome'], df_prod['ID']))
+        prod_sel = st.selectbox("Produto:", list(opcoes.keys()), key="ajuste_prod")
+        qtd_mov = st.number_input("Qtd:", min_value=1, step=1)
+        
+        c1, c2 = st.columns(2)
+        if c1.button("🟢 Entrada"):
+            idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
+            df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) + qtd_mov
+            salvar_produtos(df_prod)
+            st.success("Estoque adicionado!")
             
-            c1, c2 = st.columns(2)
-            if c1.button("🟢 Entrada"):
-                idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
-                df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) + qtd_mov
+        if c2.button("🔴 Saída (Perda)"):
+            idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
+            nova_qtd = int(df_prod.at[idx, 'Quantidade']) - qtd_mov
+            if nova_qtd < 0:
+                st.error("Estoque insuficiente!")
+            else:
+                df_prod.at[idx, 'Quantidade'] = nova_qtd
                 salvar_produtos(df_prod)
-                st.success("Estoque adicionado!")
-                
-            if c2.button("🔴 Saída (Perda)"):
-                idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
-                nova_qtd = int(df_prod.at[idx, 'Quantidade']) - qtd_mov
-                if nova_qtd < 0:
-                    st.error("Estoque insuficiente!")
-                else:
-                    df_prod.at[idx, 'Quantidade'] = nova_qtd
-                    salvar_produtos(df_prod)
-                    st.success("Estoque reduzido!")
-    except:
-        st.write("Conecte a planilha para ver os produtos.")
+                st.success("Estoque reduzido!")
+    else:
+        st.info("Cadastre um produto primeiro.")
 
 # ================= ABA 4: VENDER / CARRINHO / PDF =================
 with aba4:
     st.subheader("Orçamento e Venda")
     nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva")
     
-    try:
-        df_prod = ler_produtos()
-        if not df_prod.empty:
-            opcoes_orc = dict(zip(df_prod['Nome'], df_prod.to_dict('records')))
-            c_prod, c_qtd = st.columns([2, 1])
-            prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
-            qtd_orc = c_qtd.number_input("Qtd:", min_value=1, step=1, key="qtd_orc")
-                
-            if st.button("➕ Adicionar ao Carrinho", use_container_width=True):
-                dados = opcoes_orc[prod_selecionado]
-                if qtd_orc > int(dados['Quantidade']):
-                    st.error(f"Estoque insuficiente! Só restam {dados['Quantidade']} unidades.")
-                else:
-                    st.session_state.orcamento_itens.append({
-                        "ID": dados['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
-                        "Custo_Un": float(dados['Custo']), "Preco_Un": float(dados['Venda']),
-                        "Subtotal": float(dados['Venda']) * qtd_orc
-                    })
-                    st.success("Adicionado!")
-                
-        # MOSTRA O CARRINHO
-        if st.session_state.orcamento_itens:
-            st.write("---")
-            total_orcamento = sum(item['Subtotal'] for item in st.session_state.orcamento_itens)
+    df_prod = ler_produtos()
+    if not df_prod.empty:
+        opcoes_orc = dict(zip(df_prod['Nome'], df_prod.to_dict('records')))
+        c_prod, c_qtd = st.columns([2, 1])
+        prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
+        qtd_orc = c_qtd.number_input("Qtd:", min_value=1, step=1, key="qtd_orc")
             
+        if st.button("➕ Adicionar ao Carrinho", use_container_width=True):
+            dados_prod = opcoes_orc[prod_selecionado]
+            if qtd_orc > int(dados_prod['Quantidade']):
+                st.error(f"Estoque insuficiente! Só restam {dados_prod['Quantidade']} unidades.")
+            else:
+                st.session_state.orcamento_itens.append({
+                    "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
+                    "Custo_Un": float(dados_prod['Custo']), "Preco_Un": float(dados_prod['Venda']),
+                    "Subtotal": float(dados_prod['Venda']) * qtd_orc
+                })
+                st.success("Adicionado!")
+                
+    # MOSTRA O CARRINHO
+    if st.session_state.orcamento_itens:
+        st.write("---")
+        total_orcamento = sum(item['Subtotal'] for item in st.session_state.orcamento_itens)
+        
+        for item in st.session_state.orcamento_itens:
+            st.write(f"▫️ {item['Qtd']}x {item['Produto']} | Un: R$ {item['Preco_Un']:.2f} | Sub: R$ {item['Subtotal']:.2f}")
+            
+        st.subheader(f"Total a Pagar: R$ {total_orcamento:.2f}")
+        st.write("---")
+        
+        # PDF
+        cliente_pdf = nome_cliente if nome_cliente else "Consumidor Final"
+        pdf_bytes = gerar_pdf(cliente_pdf, st.session_state.orcamento_itens, total_orcamento)
+        st.download_button(
+            label="📄 Baixar PDF do Orçamento",
+            data=pdf_bytes,
+            file_name=f"Orcamento_{cliente_pdf.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+            
+        # FINALIZAR VENDA
+        if st.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+            mes_atual = datetime.now().strftime("%m/%Y")
+            df_vendas = ler_vendas()
+            
+            novas_vendas = []
             for item in st.session_state.orcamento_itens:
-                st.write(f"▫️ {item['Qtd']}x {item['Produto']} | Un: R$ {item['Preco_Un']:.2f} | Sub: R$ {item['Subtotal']:.2f}")
+                # Baixa no estoque
+                idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
+                df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
                 
-            st.subheader(f"Total a Pagar: R$ {total_orcamento:.2f}")
-            st.write("---")
+                # Registrar a venda
+                novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1
+                custo_total = item['Custo_Un'] * item['Qtd']
+                novas_vendas.append({
+                    'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
+                    'Quantidade': item['Qtd'], 'Custo_Total': custo_total, 
+                    'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
+                })
             
-            # PDF
-            cliente_pdf = nome_cliente if nome_cliente else "Consumidor Final"
-            pdf_bytes = gerar_pdf(cliente_pdf, st.session_state.orcamento_itens, total_orcamento)
-            st.download_button(
-                label="📄 Baixar PDF do Orçamento",
-                data=pdf_bytes,
-                file_name=f"Orcamento_{cliente_pdf.replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            # Salvar nas duas abas
+            salvar_produtos(df_prod)
+            df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
+            salvar_vendas(df_vendas_atualizado)
+            
+            st.session_state.orcamento_itens = []
+            st.success("🎉 Venda salva na Nuvem e estoque atualizado!")
+            st.rerun()
                 
-            # FINALIZAR VENDA
-            if st.button("✅ Finalizar Venda", type="primary", use_container_width=True):
-                mes_atual = datetime.now().strftime("%m/%Y")
-                df_vendas = ler_vendas()
-                
-                novas_vendas = []
-                for item in st.session_state.orcamento_itens:
-                    # Baixa no estoque
-                    idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
-                    df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
-                    
-                    # Registrar a venda
-                    novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1
-                    custo_total = item['Custo_Un'] * item['Qtd']
-                    novas_vendas.append({
-                        'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
-                        'Quantidade': item['Qtd'], 'Custo_Total': custo_total, 
-                        'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
-                    })
-                
-                # Salvar nas duas abas
-                salvar_produtos(df_prod)
-                df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
-                salvar_vendas(df_vendas_atualizado)
-                
-                st.session_state.orcamento_itens = []
-                st.success("🎉 Venda salva na Nuvem e estoque atualizado!")
-                st.rerun()
-                    
-            if st.button("🗑️ Limpar Carrinho", use_container_width=True):
-                st.session_state.orcamento_itens = []
-                st.rerun()
-    except Exception as e:
-         pass # Ignora erros até a planilha estar conectada
+        if st.button("🗑️ Limpar Carrinho", use_container_width=True):
+            st.session_state.orcamento_itens = []
+            st.rerun()
 
 # ================= ABA 5: GRÁFICOS E RELATÓRIOS =================
 with aba5:
     st.subheader("Desempenho e Gráficos")
-    try:
-        df_vendas = ler_vendas()
-        if df_vendas.empty:
-            st.info("Nenhuma venda finalizada ainda.")
-        else:
-            meses = df_vendas['Mes_Ano'].unique()
-            mes_selecionado = st.selectbox("Selecione o Mês:", meses)
-            
-            dados_mes = df_vendas[df_vendas['Mes_Ano'] == mes_selecionado]
-            faturamento = dados_mes['Venda_Total'].astype(float).sum()
-            custo = dados_mes['Custo_Total'].astype(float).sum()
-            lucro = faturamento - custo
-            
-            st.metric("Faturamento Mensal", f"R$ {faturamento:.2f}")
-            c_m1, c_m2 = st.columns(2)
-            c_m1.metric("Custo Mercadoria", f"R$ {custo:.2f}")
-            c_m2.metric("Lucro Bruto", f"R$ {lucro:.2f}")
-            
-            st.write("---")
-            st.write("📊 **Gráfico: Produtos Mais Vendidos**")
-            
-            ranking = dados_mes.groupby('Nome_Produto')['Quantidade'].sum().reset_index()
-            ranking = ranking.sort_values(by='Quantidade', ascending=False)
-            st.bar_chart(ranking.set_index('Nome_Produto'))
-    except:
-        st.write("Conecte a planilha para ver os relatórios.")
+    df_vendas = ler_vendas()
+    if df_vendas.empty:
+        st.info("Nenhuma venda finalizada ainda.")
+    else:
+        meses = df_vendas['Mes_Ano'].unique()
+        mes_selecionado = st.selectbox("Selecione o Mês:", meses)
+        
+        dados_mes = df_vendas[df_vendas['Mes_Ano'] == mes_selecionado]
+        faturamento = dados_mes['Venda_Total'].astype(float).sum()
+        custo = dados_mes['Custo_Total'].astype(float).sum()
+        lucro = faturamento - custo
+        
+        st.metric("Faturamento Mensal", f"R$ {faturamento:.2f}")
+        c_m1, c_m2 = st.columns(2)
+        c_m1.metric("Custo Mercadoria", f"R$ {custo:.2f}")
+        c_m2.metric("Lucro Bruto", f"R$ {lucro:.2f}")
+        
+        st.write("---")
+        st.write("📊 **Gráfico: Produtos Mais Vendidos**")
+        
+        ranking = dados_mes.groupby('Nome_Produto')['Quantidade'].sum().reset_index()
+        ranking = ranking.sort_values(by='Quantidade', ascending=False)
+        st.bar_chart(ranking.set_index('Nome_Produto'))
