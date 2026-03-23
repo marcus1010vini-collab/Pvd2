@@ -31,6 +31,8 @@ except Exception as e:
     st.error(f"🚨 Erro de Autenticação: {e}")
     st.stop()
 
+# --- MEMÓRIA CACHE (EVITA O ERRO 429 DO GOOGLE) ---
+@st.cache_data(ttl=30, show_spinner=False)
 def ler_produtos():
     try:
         dados = aba_produtos.get_all_records()
@@ -49,7 +51,9 @@ def salvar_produtos(df):
         aba_produtos.update(values=dados, range_name="A1")
     except TypeError:
         aba_produtos.update("A1", dados)
+    ler_produtos.clear() # Avisa a memória que os dados mudaram!
 
+@st.cache_data(ttl=30, show_spinner=False)
 def ler_vendas():
     try:
         dados = aba_vendas.get_all_records()
@@ -68,6 +72,7 @@ def salvar_vendas(df):
         aba_vendas.update(values=dados, range_name="A1")
     except TypeError:
         aba_vendas.update("A1", dados)
+    ler_vendas.clear() # Avisa a memória que uma venda nova entrou!
 
 # --- FUNÇÃO GERADORA DE PDF ---
 def gerar_pdf(cliente_nome, itens, total):
@@ -212,7 +217,6 @@ with aba3:
 with aba4:
     st.subheader("Orçamento e Venda")
     
-    # O nome do cliente agora fica salvo na memória enquanto a aba estiver aberta
     nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva", key="cliente_venda_memoria")
     
     df_prod = ler_produtos()
@@ -258,7 +262,6 @@ with aba4:
     if st.session_state.orcamento_itens:
         st.write("---")
         
-        # Destaque do nome do cliente
         if st.session_state.cliente_venda_memoria:
             st.markdown(f"<h3 style='color: #1E3A8A; text-align: center;'>🛒 Carrinho de: <span style='color: #EAB308;'>{st.session_state.cliente_venda_memoria}</span></h3>", unsafe_allow_html=True)
         else:
@@ -266,26 +269,20 @@ with aba4:
             
         total_orcamento = 0.0
         
-        # Lista editável de produtos no carrinho
         for i, item in enumerate(st.session_state.orcamento_itens):
             st.markdown(f"**{item['Qtd']}x - {item['Produto']}**")
             
-            # Colunas organizadas para facilitar o toque no celular
             col_preco, col_sub, col_del = st.columns([3, 3, 2])
             
-            # Permite alterar o preço apenas para esta venda
             novo_preco = col_preco.number_input("Preço Un.", value=float(item['Preco_Un']), step=1.0, format="%.2f", key=f"preco_edit_{i}")
             
-            # Recalcula e mostra o subtotal
             novo_subtotal = novo_preco * item['Qtd']
             col_sub.markdown(f"<div style='margin-top:32px; font-size: 16px;'>Sub: <b>R$ {novo_subtotal:.2f}</b></div>", unsafe_allow_html=True)
             
-            # Atualiza a memória
             st.session_state.orcamento_itens[i]['Preco_Un'] = novo_preco
             st.session_state.orcamento_itens[i]['Subtotal'] = novo_subtotal
             total_orcamento += novo_subtotal
             
-            # Botão individual de excluir
             st.markdown("""<style>div.stButton > button:first-child { margin-top: 22px; }</style>""", unsafe_allow_html=True)
             if col_del.button("🗑️", key=f"del_{i}", use_container_width=True, help="Remover item"):
                 st.session_state.orcamento_itens.pop(i)
