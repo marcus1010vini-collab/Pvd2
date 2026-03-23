@@ -110,7 +110,14 @@ if 'orcamento_itens' not in st.session_state:
     st.session_state.orcamento_itens = []
 
 # --- INTERFACE ---
-st.title("⚡ MV Soluções Elétricas - PDV")
+st.markdown("""
+    <div style="background-color: #1E3A8A; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 25px;">
+        <h1 style="color: white; margin-bottom: 5px; font-size: 32px;">⚡ Rodstar</h1>
+        <p style="color: #60A5FA; margin: 0; font-size: 18px; font-weight: bold;">📱 WhatsApp: (69) 984178413</p>
+        <p style="color: white; margin: 5px 0 0 0; font-size: 16px;">📍 Rua Pedro Américo, nº 55 - Bairro Pioneiros</p>
+    </div>
+""", unsafe_allow_html=True)
+
 
 aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "✏️ Editar", "📝 Vender", "📈 Gráficos"])
 
