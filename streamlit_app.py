@@ -7,7 +7,8 @@ from fpdf import FPDF
 import tempfile
 from datetime import datetime
 
-st.set_page_config(page_title="Sistema PDV", page_icon="🏢", layout="centered")
+# --- CONFIGURAÇÃO DA PÁGINA (AGORA PERSONALIZADA!) ---
+st.set_page_config(page_title="MV Soluções Elétricas", page_icon="⚡", layout="centered")
 
 # --- LIGAÇÃO NATIVA E DIRETA AO GOOGLE SHEETS ---
 try:
@@ -109,9 +110,9 @@ if 'orcamento_itens' not in st.session_state:
     st.session_state.orcamento_itens = []
 
 # --- INTERFACE ---
-st.title("🏢 Gestão e PDV na Nuvem")
+st.title("⚡ MV Soluções Elétricas - PDV")
 
-aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "🔄 Ajuste", "📝 Vender", "📈 Gráficos"])
+aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "✏️ Editar", "📝 Vender", "📈 Gráficos"])
 
 # ================= ABA 1: ESTOQUE =================
 with aba1:
@@ -126,7 +127,7 @@ with aba1:
 
 # ================= ABA 2: NOVO PRODUTO =================
 with aba2:
-    st.subheader("Cadastrar Produto")
+    st.subheader("Cadastrar Novo Produto")
     with st.form("form_produto", clear_on_submit=True):
         nome = st.text_input("Nome do Produto:")
         marca = st.text_input("Marca:")
@@ -149,34 +150,50 @@ with aba2:
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
                 salvar_produtos(df_atualizado)
                 st.success("✅ Produto salvo diretamente no Google Sheets!")
+                st.rerun()
 
-# ================= ABA 3: AJUSTE MANUAL =================
+# ================= ABA 3: EDITAR PRODUTO =================
 with aba3:
-    st.subheader("Entrada e Perdas")
+    st.subheader("Editar Dados do Produto")
     df_prod = ler_produtos()
+    
     if not df_prod.empty:
         opcoes = dict(zip(df_prod['Nome'], df_prod['ID']))
-        prod_sel = st.selectbox("Produto:", list(opcoes.keys()), key="ajuste_prod")
-        qtd_mov = st.number_input("Qtd:", min_value=1, step=1)
+        prod_sel = st.selectbox("Selecione o Produto para Editar:", list(opcoes.keys()), key="edit_prod")
         
-        c1, c2 = st.columns(2)
-        if c1.button("🟢 Entrada"):
-            idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
-            df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) + qtd_mov
-            salvar_produtos(df_prod)
-            st.success("Estoque adicionado!")
+        # Encontra a linha exata do produto selecionado
+        idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
+        linha_atual = df_prod.iloc[idx]
+        
+        with st.form("form_editar_produto"):
+            st.markdown(f"**Atualizando:** {linha_atual['Nome']}")
             
-        if c2.button("🔴 Saída (Perda)"):
-            idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
-            nova_qtd = int(df_prod.at[idx, 'Quantidade']) - qtd_mov
-            if nova_qtd < 0:
-                st.error("Estoque insuficiente!")
-            else:
+            novo_nome = st.text_input("Nome do Produto:", value=str(linha_atual['Nome']))
+            nova_marca = st.text_input("Marca:", value=str(linha_atual['Marca']))
+            
+            c1, c2 = st.columns(2)
+            novo_custo = c1.number_input("Custo (R$):", value=float(linha_atual['Custo']), step=0.50, format="%.2f")
+            novo_venda = c2.number_input("Venda (R$):", value=float(linha_atual['Venda']), step=0.50, format="%.2f")
+            
+            c3, c4 = st.columns(2)
+            nova_qtd = c3.number_input("Estoque Atual:", value=int(linha_atual['Quantidade']), step=1)
+            novo_alarme = c4.number_input("Alarme:", value=int(linha_atual['Alarme']), step=1)
+            
+            if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
+                # Atualiza a tabela na memória com os novos dados
+                df_prod.at[idx, 'Nome'] = novo_nome
+                df_prod.at[idx, 'Marca'] = nova_marca
+                df_prod.at[idx, 'Custo'] = novo_custo
+                df_prod.at[idx, 'Venda'] = novo_venda
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
+                df_prod.at[idx, 'Alarme'] = novo_alarme
+                
+                # Salva direto no Google Sheets
                 salvar_produtos(df_prod)
-                st.success("Estoque reduzido!")
+                st.success("✅ Produto atualizado com sucesso!")
+                st.rerun()
     else:
-        st.info("Cadastre um produto primeiro.")
+        st.info("Cadastre um produto primeiro para poder editá-lo.")
 
 # ================= ABA 4: VENDER / CARRINHO / PDF =================
 with aba4:
