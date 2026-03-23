@@ -283,7 +283,6 @@ with aba3:
 with aba4:
     st.subheader("Orçamento e Venda")
     
-    # Mensagem de sucesso após finalizar a venda
     if st.session_state.get('mostrar_sucesso_venda'):
         st.success("🎉 Venda finalizada! Estoque atualizado e Recibo salvo no seu celular.")
         st.session_state.mostrar_sucesso_venda = False
@@ -314,7 +313,6 @@ with aba4:
             except:
                 alarme_configurado = 0
                 
-            # 🚨 SISTEMA DE ALERTAS NA VENDA
             if estoque_atual == 0:
                 st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
             elif estoque_atual == 1:
@@ -322,7 +320,6 @@ with aba4:
             elif estoque_atual <= alarme_configurado:
                 st.warning(f"⚠️ ESTOQUE BAIXO: Restam apenas {estoque_atual} unidades.")
 
-            # 🔒 BLOQUEIO DA QUANTIDADE MÁXIMA
             max_permitido = estoque_atual if estoque_atual > 0 else 1
             qtd_orc = c_qtd.number_input("Qtd:", min_value=1, max_value=max_permitido, step=1, key="qtd_orc")
                 
@@ -339,7 +336,6 @@ with aba4:
                     })
                     st.success("Adicionado!")
                 
-    # MOSTRA O CARRINHO COM DESTAQUE E EDIÇÃO
     if st.session_state.orcamento_itens:
         st.write("---")
         
@@ -373,11 +369,9 @@ with aba4:
             
         st.subheader(f"Total a Pagar: R$ {total_orcamento:.2f}")
         
-        # GERAÇÃO DO PDF PARA OS BOTÕES
         cliente_pdf = st.session_state.cliente_venda_memoria if st.session_state.cliente_venda_memoria else "Consumidor Final"
         pdf_bytes = gerar_pdf(cliente_pdf, st.session_state.orcamento_itens, total_orcamento)
         
-        # BOTÕES LADO A LADO
         col_btn1, col_btn2 = st.columns(2)
         
         with col_btn1:
@@ -446,3 +440,26 @@ with aba5:
         st.write("---")
         st.write("📊 **Gráfico Visual de Vendas**")
         st.bar_chart(ranking.set_index('Nome_Produto')['Quantidade'])
+
+        # --- ZONA DE PERIGO: LIMPAR GRÁFICOS E VENDAS ---
+        st.write("---")
+        with st.expander("⚠️ Área de Risco: Limpar Histórico de Vendas"):
+            st.error("Atenção! Ao clicar aqui, você apagará **TODAS AS VENDAS** já registradas no sistema. Seus gráficos e relatórios serão zerados.")
+            
+            # Primeira trava de segurança
+            confirmar_exclusao = st.checkbox("Eu entendo que esta ação é irreversível e quero apagar os dados.")
+            
+            # Só mostra o botão se a caixinha estiver marcada
+            if confirmar_exclusao:
+                if st.button("🗑️ Excluir Todo o Histórico", type="primary", use_container_width=True):
+                    # Limpa a aba e recria apenas o cabeçalho
+                    aba_vendas.clear()
+                    cabecalho = [['ID', 'Produto_ID', 'Nome_Produto', 'Quantidade', 'Custo_Total', 'Venda_Total', 'Mes_Ano']]
+                    try:
+                        aba_vendas.update(values=cabecalho, range_name="A1")
+                    except TypeError:
+                        aba_vendas.update("A1", cabecalho)
+                    
+                    st.cache_data.clear()
+                    st.success("Histórico de vendas apagado com sucesso!")
+                    st.rerun()
