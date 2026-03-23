@@ -115,10 +115,10 @@ def gerar_pdf(cliente_nome, itens, total):
         with open(tmp.name, "rb") as f:
             return f.read()
 
-# --- MEMÓRIA DO CARRINHO ---
+# --- MEMÓRIA DO CARRINHO E CLIENTE ---
 if 'orcamento_itens' not in st.session_state:
     st.session_state.orcamento_itens = []
-
+    
 # --- BANNER PERSONALIZADO ---
 st.markdown("""
     <div style="background-color: #1E3A8A; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 25px;">
@@ -211,7 +211,9 @@ with aba3:
 # ================= ABA 4: VENDER / CARRINHO / PDF =================
 with aba4:
     st.subheader("Orçamento e Venda")
-    nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva")
+    
+    # O nome do cliente agora fica salvo na memória enquanto a aba estiver aberta
+    nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva", key="cliente_venda_memoria")
     
     df_prod = ler_produtos()
     if not df_prod.empty:
@@ -219,7 +221,6 @@ with aba4:
         c_prod, c_qtd = st.columns([2, 1])
         prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
         
-        # Puxa os dados do produto selecionado
         dados_prod = opcoes_orc[prod_selecionado]
         estoque_atual = int(dados_prod['Quantidade'])
         
@@ -228,7 +229,7 @@ with aba4:
         except:
             alarme_configurado = 0
             
-        # 🚨 SISTEMA DE ALERTAS (Aparece logo ao selecionar)
+        # 🚨 SISTEMA DE ALERTAS
         if estoque_atual == 0:
             st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
         elif estoque_atual == 1:
@@ -253,19 +254,49 @@ with aba4:
                 })
                 st.success("Adicionado!")
                 
-    # MOSTRA O CARRINHO
+    # MOSTRA O CARRINHO COM DESTAQUE E EDIÇÃO
     if st.session_state.orcamento_itens:
         st.write("---")
-        total_orcamento = sum(item['Subtotal'] for item in st.session_state.orcamento_itens)
         
-        for item in st.session_state.orcamento_itens:
-            st.write(f"▫️ {item['Qtd']}x {item['Produto']} | Un: R$ {item['Preco_Un']:.2f} | Sub: R$ {item['Subtotal']:.2f}")
+        # Destaque do nome do cliente
+        if st.session_state.cliente_venda_memoria:
+            st.markdown(f"<h3 style='color: #1E3A8A; text-align: center;'>🛒 Carrinho de: <span style='color: #EAB308;'>{st.session_state.cliente_venda_memoria}</span></h3>", unsafe_allow_html=True)
+        else:
+            st.markdown("<h3 style='color: #1E3A8A; text-align: center;'>🛒 Carrinho</h3>", unsafe_allow_html=True)
+            
+        total_orcamento = 0.0
+        
+        # Lista editável de produtos no carrinho
+        for i, item in enumerate(st.session_state.orcamento_itens):
+            st.markdown(f"**{item['Qtd']}x - {item['Produto']}**")
+            
+            # Colunas organizadas para facilitar o toque no celular
+            col_preco, col_sub, col_del = st.columns([3, 3, 2])
+            
+            # Permite alterar o preço apenas para esta venda
+            novo_preco = col_preco.number_input("Preço Un.", value=float(item['Preco_Un']), step=1.0, format="%.2f", key=f"preco_edit_{i}")
+            
+            # Recalcula e mostra o subtotal
+            novo_subtotal = novo_preco * item['Qtd']
+            col_sub.markdown(f"<div style='margin-top:32px; font-size: 16px;'>Sub: <b>R$ {novo_subtotal:.2f}</b></div>", unsafe_allow_html=True)
+            
+            # Atualiza a memória
+            st.session_state.orcamento_itens[i]['Preco_Un'] = novo_preco
+            st.session_state.orcamento_itens[i]['Subtotal'] = novo_subtotal
+            total_orcamento += novo_subtotal
+            
+            # Botão individual de excluir
+            st.markdown("""<style>div.stButton > button:first-child { margin-top: 22px; }</style>""", unsafe_allow_html=True)
+            if col_del.button("🗑️", key=f"del_{i}", use_container_width=True, help="Remover item"):
+                st.session_state.orcamento_itens.pop(i)
+                st.rerun()
+                
+            st.write("---")
             
         st.subheader(f"Total a Pagar: R$ {total_orcamento:.2f}")
-        st.write("---")
         
         # PDF
-        cliente_pdf = nome_cliente if nome_cliente else "Consumidor Final"
+        cliente_pdf = st.session_state.cliente_venda_memoria if st.session_state.cliente_venda_memoria else "Consumidor Final"
         pdf_bytes = gerar_pdf(cliente_pdf, st.session_state.orcamento_itens, total_orcamento)
         st.download_button(
             label="📄 Baixar PDF do Orçamento",
