@@ -90,7 +90,7 @@ def gerar_pdf(cliente_nome, itens, total):
     
     # 2. Título e Cliente
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, "ORCAMENTO / PEDIDO", ln=True, align="C")
+    pdf.cell(0, 10, "ORCAMENTO / RECIBO", ln=True, align="C")
     pdf.set_font("Arial", '', 12)
     pdf.cell(0, 8, f"Cliente: {cliente_nome}", ln=True)
     pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
@@ -120,6 +120,33 @@ def gerar_pdf(cliente_nome, itens, total):
         with open(tmp.name, "rb") as f:
             return f.read()
 
+# --- FUNÇÃO 2 EM 1 (VENDA + PDF) ---
+def processar_venda_callback(itens):
+    mes_atual = datetime.now().strftime("%m/%Y")
+    df_prod = ler_produtos()
+    df_vendas = ler_vendas()
+    
+    novas_vendas = []
+    for item in itens:
+        idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
+        df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
+        
+        novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1 + len(novas_vendas)
+        custo_total = item['Custo_Un'] * item['Qtd']
+        novas_vendas.append({
+            'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
+            'Quantidade': item['Qtd'], 'Custo_Total': custo_total, 
+            'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
+        })
+    
+    salvar_produtos(df_prod)
+    if novas_vendas:
+        df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
+        salvar_vendas(df_vendas_atualizado)
+    
+    st.session_state.orcamento_itens = []
+    st.session_state.mostrar_sucesso_venda = True
+
 # --- MEMÓRIA DO CARRINHO E CLIENTE ---
 if 'orcamento_itens' not in st.session_state:
     st.session_state.orcamento_itens = []
@@ -141,14 +168,11 @@ with aba1:
     if df.empty:
         st.info("Nenhum produto cadastrado na planilha.")
     else:
-        # 🚨 PAINEL DE ALERTAS DE ESTOQUE BAIXO NO TOPO
         st.subheader("⚠️ Alertas de Estoque")
         
-        # Converte para número para poder fazer a matemática
         df['Qtd_Num'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0)
         df['Alarme_Num'] = pd.to_numeric(df['Alarme'], errors='coerce').fillna(0)
         
-        # A Mágica do Alerta: Pega produtos menores que o Alarme OU menores que 1
         df_alertas = df[(df['Qtd_Num'] <= df['Alarme_Num']) | (df['Qtd_Num'] <= 1)].copy()
         
         if df_alertas.empty:
@@ -160,7 +184,6 @@ with aba1:
             
         st.write("---")
         
-        # 📦 ESTOQUE GERAL ABAIXO DOS ALERTAS
         st.subheader("📦 Estoque Completo")
         pesquisa = st.text_input("🔍 Pesquisar produto por nome:", "")
         df_mostrar = df[['Nome', 'Marca', 'Custo', 'Venda', 'Quantidade']].copy()
@@ -187,7 +210,6 @@ with aba2:
         preco_custo = col1.number_input("Custo (R$):", min_value=0.0, step=0.50, format="%.2f")
         preco_venda = col2.number_input("Venda (R$):", min_value=0.0, step=0.50, format="%.2f")
         
-        # CAMPO DO ALARME BEM VISÍVEL AQUI
         st.write("---")
         st.markdown("**Configurações de Estoque**")
         col3, col4 = st.columns(2)
@@ -260,6 +282,12 @@ with aba3:
 # ================= ABA 4: VENDER / CARRINHO / PDF =================
 with aba4:
     st.subheader("Orçamento e Venda")
+    
+    # Mensagem de sucesso após finalizar a venda
+    if st.session_state.get('mostrar_sucesso_venda'):
+        st.success("🎉 Venda finalizada! Estoque atualizado e Recibo salvo no seu celular.")
+        st.session_state.mostrar_sucesso_venda = False
+        
     nome_cliente = st.text_input("Nome do Cliente:", placeholder="Ex: João da Silva", key="cliente_venda_memoria")
     
     df_prod = ler_produtos()
@@ -345,42 +373,33 @@ with aba4:
             
         st.subheader(f"Total a Pagar: R$ {total_orcamento:.2f}")
         
-        # PDF
+        # GERAÇÃO DO PDF PARA OS BOTÕES
         cliente_pdf = st.session_state.cliente_venda_memoria if st.session_state.cliente_venda_memoria else "Consumidor Final"
         pdf_bytes = gerar_pdf(cliente_pdf, st.session_state.orcamento_itens, total_orcamento)
-        st.download_button(
-            label="📄 Baixar PDF do Orçamento",
-            data=pdf_bytes,
-            file_name=f"Orcamento_{cliente_pdf.replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        
+        # BOTÕES LADO A LADO
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            st.download_button(
+                label="📄 Apenas Orçamento",
+                data=pdf_bytes,
+                file_name=f"Orcamento_{cliente_pdf.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
             
-        # FINALIZAR VENDA
-        if st.button("✅ Finalizar Venda", type="primary", use_container_width=True):
-            mes_atual = datetime.now().strftime("%m/%Y")
-            df_vendas = ler_vendas()
-            
-            novas_vendas = []
-            for item in st.session_state.orcamento_itens:
-                idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
-                df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
-                
-                novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1
-                custo_total = item['Custo_Un'] * item['Qtd']
-                novas_vendas.append({
-                    'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
-                    'Quantidade': item['Qtd'], 'Custo_Total': custo_total, 
-                    'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
-                })
-            
-            salvar_produtos(df_prod)
-            df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
-            salvar_vendas(df_vendas_atualizado)
-            
-            st.session_state.orcamento_itens = []
-            st.success("🎉 Venda salva na Nuvem e estoque atualizado!")
-            st.rerun()
+        with col_btn2:
+            st.download_button(
+                label="✅ Finalizar Venda e Recibo",
+                data=pdf_bytes,
+                file_name=f"Recibo_Venda_{cliente_pdf.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                on_click=processar_venda_callback,
+                args=(st.session_state.orcamento_itens,),
+                type="primary",
+                use_container_width=True
+            )
                 
         if st.button("🗑️ Limpar Carrinho", use_container_width=True):
             st.session_state.orcamento_itens = []
