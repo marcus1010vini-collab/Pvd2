@@ -7,8 +7,8 @@ from fpdf import FPDF
 import tempfile
 from datetime import datetime
 
-# --- CONFIGURAÇÃO DA PÁGINA (AGORA PERSONALIZADA!) ---
-st.set_page_config(page_title="MV Soluções Elétricas", page_icon="⚡", layout="centered")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="RODSTAR", page_icon="⚡", layout="centered")
 
 # --- LIGAÇÃO NATIVA E DIRETA AO GOOGLE SHEETS ---
 try:
@@ -16,7 +16,6 @@ try:
     credenciais = json.loads(chave_bruta, strict=False)
     url_planilha = st.secrets["segredos_do_google"]["planilha"]
     
-    # Apresenta o "crachá" oficial ao Google
     escopos = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -24,7 +23,6 @@ try:
     creds = Credentials.from_service_account_info(credenciais, scopes=escopos)
     cliente = gspread.authorize(creds)
     
-    # Entra na planilha com autorização VIP
     planilha = cliente.open_by_url(url_planilha)
     aba_produtos = planilha.worksheet("Produtos")
     aba_vendas = planilha.worksheet("Vendas")
@@ -75,13 +73,25 @@ def salvar_vendas(df):
 def gerar_pdf(cliente_nome, itens, total):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
+    
+    # 1. Cabeçalho da Empresa
+    pdf.set_font("Arial", 'B', 18)
+    pdf.cell(0, 8, "RODSTAR", ln=True, align="C")
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 5, "WhatsApp: (69) 984178413", ln=True, align="C")
+    pdf.cell(0, 5, "Endereco: Rua Pedro Americo, 55 - Bairro Pioneiros", ln=True, align="C")
+    pdf.ln(5)
+    
+    # 2. Título e Cliente
+    pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "ORCAMENTO / PEDIDO", ln=True, align="C")
     pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, f"Cliente: {cliente_nome}", ln=True)
-    pdf.cell(0, 10, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
-    pdf.cell(0, 10, "-"*40, ln=True)
+    pdf.cell(0, 8, f"Cliente: {cliente_nome}", ln=True)
+    pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
+    pdf.cell(0, 5, "-"*40, ln=True)
     
+    # 3. Tabela de Produtos
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(15, 8, "Qtd", border=1)
     pdf.cell(85, 8, "Produto", border=1)
@@ -109,15 +119,14 @@ def gerar_pdf(cliente_nome, itens, total):
 if 'orcamento_itens' not in st.session_state:
     st.session_state.orcamento_itens = []
 
-# --- INTERFACE ---
+# --- BANNER PERSONALIZADO ---
 st.markdown("""
     <div style="background-color: #1E3A8A; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 25px;">
-        <h1 style="color: white; margin-bottom: 5px; font-size: 32px;">⚡ Rodstar</h1>
+        <h1 style="color: white; margin-bottom: 5px; font-size: 32px;">⚡ RODSTAR</h1>
         <p style="color: #60A5FA; margin: 0; font-size: 18px; font-weight: bold;">📱 WhatsApp: (69) 984178413</p>
         <p style="color: white; margin: 5px 0 0 0; font-size: 16px;">📍 Rua Pedro Américo, nº 55 - Bairro Pioneiros</p>
     </div>
 """, unsafe_allow_html=True)
-
 
 aba1, aba2, aba3, aba4, aba5 = st.tabs(["📊 Estoque", "➕ Novo", "✏️ Editar", "📝 Vender", "📈 Gráficos"])
 
@@ -168,7 +177,6 @@ with aba3:
         opcoes = dict(zip(df_prod['Nome'], df_prod['ID']))
         prod_sel = st.selectbox("Selecione o Produto para Editar:", list(opcoes.keys()), key="edit_prod")
         
-        # Encontra a linha exata do produto selecionado
         idx = df_prod.index[df_prod['ID'] == opcoes[prod_sel]].tolist()[0]
         linha_atual = df_prod.iloc[idx]
         
@@ -187,7 +195,6 @@ with aba3:
             novo_alarme = c4.number_input("Alarme:", value=int(linha_atual['Alarme']), step=1)
             
             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
-                # Atualiza a tabela na memória com os novos dados
                 df_prod.at[idx, 'Nome'] = novo_nome
                 df_prod.at[idx, 'Marca'] = nova_marca
                 df_prod.at[idx, 'Custo'] = novo_custo
@@ -195,7 +202,6 @@ with aba3:
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
                 df_prod.at[idx, 'Alarme'] = novo_alarme
                 
-                # Salva direto no Google Sheets
                 salvar_produtos(df_prod)
                 st.success("✅ Produto atualizado com sucesso!")
                 st.rerun()
@@ -212,12 +218,33 @@ with aba4:
         opcoes_orc = dict(zip(df_prod['Nome'], df_prod.to_dict('records')))
         c_prod, c_qtd = st.columns([2, 1])
         prod_selecionado = c_prod.selectbox("Produto:", list(opcoes_orc.keys()))
-        qtd_orc = c_qtd.number_input("Qtd:", min_value=1, step=1, key="qtd_orc")
+        
+        # Puxa os dados do produto selecionado
+        dados_prod = opcoes_orc[prod_selecionado]
+        estoque_atual = int(dados_prod['Quantidade'])
+        
+        try:
+            alarme_configurado = int(dados_prod['Alarme'])
+        except:
+            alarme_configurado = 0
+            
+        # 🚨 SISTEMA DE ALERTAS (Aparece logo ao selecionar)
+        if estoque_atual == 0:
+            st.error(f"❌ ESGOTADO! Sem unidades no estoque.")
+        elif estoque_atual == 1:
+            st.warning("⚠️ ATENÇÃO: Resta apenas 1 unidade no estoque!")
+        elif estoque_atual <= alarme_configurado:
+            st.warning(f"⚠️ ESTOQUE BAIXO: Restam apenas {estoque_atual} unidades.")
+
+        # 🔒 BLOQUEIO DA QUANTIDADE MÁXIMA
+        max_permitido = estoque_atual if estoque_atual > 0 else 1
+        qtd_orc = c_qtd.number_input("Qtd:", min_value=1, max_value=max_permitido, step=1, key="qtd_orc")
             
         if st.button("➕ Adicionar ao Carrinho", use_container_width=True):
-            dados_prod = opcoes_orc[prod_selecionado]
-            if qtd_orc > int(dados_prod['Quantidade']):
-                st.error(f"Estoque insuficiente! Só restam {dados_prod['Quantidade']} unidades.")
+            if estoque_atual == 0:
+                st.error("Não é possível adicionar um produto esgotado!")
+            elif qtd_orc > estoque_atual:
+                st.error(f"Estoque insuficiente! Só restam {estoque_atual} unidades.")
             else:
                 st.session_state.orcamento_itens.append({
                     "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
@@ -255,11 +282,9 @@ with aba4:
             
             novas_vendas = []
             for item in st.session_state.orcamento_itens:
-                # Baixa no estoque
                 idx = df_prod.index[df_prod['ID'] == item['ID']].tolist()[0]
                 df_prod.at[idx, 'Quantidade'] = int(df_prod.at[idx, 'Quantidade']) - item['Qtd']
                 
-                # Registrar a venda
                 novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1
                 custo_total = item['Custo_Un'] * item['Qtd']
                 novas_vendas.append({
@@ -268,7 +293,6 @@ with aba4:
                     'Venda_Total': item['Subtotal'], 'Mes_Ano': mes_atual
                 })
             
-            # Salvar nas duas abas
             salvar_produtos(df_prod)
             df_vendas_atualizado = pd.concat([df_vendas, pd.DataFrame(novas_vendas)], ignore_index=True)
             salvar_vendas(df_vendas_atualizado)
