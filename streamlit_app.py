@@ -10,14 +10,18 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="RODSTAR", page_icon="⚡", layout="centered")
 
-# --- TRADUTORES BLINDADOS DE DINHEIRO ---
-def tratar_dinheiro(valor):
-    """Lê qualquer coisa (1.200,50 ou 1200.50 ou R$ 10) e transforma em número universal puro."""
-    v = str(valor).replace('R$', '').replace(' ', '').strip()
-    if not v:
-        return 0.0
+# --- LÓGICA DE MAQUININHA DE CARTÃO E TRADUTORES ---
+def ler_numero(valor):
+    """Lê os dados salvos no banco com segurança absoluta"""
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    v = str(valor).replace("'", "").replace('R$', '').replace(' ', '').strip()
+    if not v: return 0.0
     if '.' in v and ',' in v:
-        v = v.replace('.', '').replace(',', '.')
+        if v.rfind(',') > v.rfind('.'):
+            v = v.replace('.', '').replace(',', '.')
+        else:
+            v = v.replace(',', '')
     elif ',' in v:
         v = v.replace(',', '.')
     try:
@@ -25,13 +29,16 @@ def tratar_dinheiro(valor):
     except:
         return 0.0
 
+def entrada_maquininha(valor_digitado):
+    """O pedido do usuário: ignora pontos e vírgulas, divide direto por 100"""
+    numeros = ''.join(filter(str.isdigit, str(valor_digitado)))
+    if not numeros: return 0.0
+    return float(numeros) / 100
+
 def formatar_dinheiro(valor):
-    """Pega o número universal da planilha e veste com a roupa de Real brasileiro (R$ 1.234,50)."""
-    try:
-        v = tratar_dinheiro(valor)
-        return f"R$ {v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-    except:
-        return "R$ 0,00"
+    """Formata para a tela (R$ 1.234,50)"""
+    v = ler_numero(valor)
+    return f"R$ {v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 # --- LIGAÇÃO NATIVA E DIRETA AO GOOGLE SHEETS ---
 try:
@@ -154,12 +161,11 @@ def processar_venda_callback(itens):
         novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1 + len(novas_vendas)
         custo_total = item['Custo_Un'] * item['Qtd']
         
-        # AGORA SALVA OS NÚMEROS PUROS
         novas_vendas.append({
             'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
             'Quantidade': item['Qtd'], 
-            'Custo_Total': custo_total, 
-            'Venda_Total': item['Subtotal'], 
+            'Custo_Total': f"'{custo_total:.2f}", 
+            'Venda_Total': f"'{item['Subtotal']:.2f}", 
             'Mes_Ano': mes_atual
         })
     
@@ -218,12 +224,10 @@ with aba1:
         if df_mostrar.empty:
             st.warning("Nenhum produto encontrado com esse nome.")
         else:
-            # Cálculos 100% baseados nos números reais
-            df_mostrar['Custo_Calc'] = df_mostrar['Custo'].apply(tratar_dinheiro)
-            df_mostrar['Venda_Calc'] = df_mostrar['Venda'].apply(tratar_dinheiro)
+            df_mostrar['Custo_Calc'] = df_mostrar['Custo'].apply(ler_numero)
+            df_mostrar['Venda_Calc'] = df_mostrar['Venda'].apply(ler_numero)
             df_mostrar['Total_Calc'] = df_mostrar['Venda_Calc'] * df_mostrar['Quantidade'].apply(lambda x: int(float(str(x).strip() or 0)))
             
-            # Formatação final para exibir na tela
             df_mostrar['Custo'] = df_mostrar['Custo_Calc'].apply(formatar_dinheiro)
             df_mostrar['Venda'] = df_mostrar['Venda_Calc'].apply(formatar_dinheiro)
             df_mostrar['Total em Estoque'] = df_mostrar['Total_Calc'].apply(formatar_dinheiro)
@@ -239,8 +243,8 @@ with aba2:
         marca = st.text_input("Marca:")
         
         col1, col2 = st.columns(2)
-        preco_custo = col1.text_input("Custo (R$):", placeholder="Ex: 15,50")
-        preco_venda = col2.text_input("Venda (R$):", placeholder="Ex: 22,50")
+        preco_custo = col1.text_input("Custo:", placeholder="Ex: Digite 1500 para R$ 15,00")
+        preco_venda = col2.text_input("Venda:", placeholder="Ex: Digite 2250 para R$ 22,50")
         
         st.write("---")
         st.markdown("**Configurações de Estoque**")
@@ -253,11 +257,13 @@ with aba2:
                 df_prod = ler_produtos()
                 novo_id = 1 if df_prod.empty else int(df_prod['ID'].max()) + 1
                 
-                # ENVIA APENAS O NÚMERO UNIVERSAL
+                str_custo = f"'{entrada_maquininha(preco_custo):.2f}"
+                str_venda = f"'{entrada_maquininha(preco_venda):.2f}"
+                
                 novo_produto = pd.DataFrame([{
                     'ID': novo_id, 'Nome': nome, 'Marca': marca, 
-                    'Custo': tratar_dinheiro(preco_custo), 
-                    'Venda': tratar_dinheiro(preco_venda), 
+                    'Custo': str_custo, 
+                    'Venda': str_venda, 
                     'Quantidade': qtd_inicial, 'Alarme': alerta_min
                 }])
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
@@ -283,24 +289,24 @@ with aba3:
             novo_nome = st.text_input("Nome do Produto:", value=str(linha_atual['Nome']))
             nova_marca = st.text_input("Marca:", value=str(linha_atual['Marca']))
             
-            # Puxa o valor do banco, transforma em R$ e limpa o "R$" para ficar fácil de editar
-            custo_atual_formatado = formatar_dinheiro(linha_atual['Custo']).replace('R$ ', '')
-            venda_atual_formatada = formatar_dinheiro(linha_atual['Venda']).replace('R$ ', '')
+            custo_atual_formatado = f"{ler_numero(linha_atual['Custo']):.2f}".replace('.', ',')
+            venda_atual_formatada = f"{ler_numero(linha_atual['Venda']):.2f}".replace('.', ',')
             
             c1, c2 = st.columns(2)
-            novo_custo = c1.text_input("Custo (R$):", value=custo_atual_formatado)
-            novo_venda = c2.text_input("Venda (R$):", value=venda_atual_formatada)
+            novo_custo = c1.text_input("Custo:", value=custo_atual_formatado, help="Pode digitar 1500 ou 15,00")
+            novo_venda = c2.text_input("Venda:", value=venda_atual_formatada, help="Pode digitar 2250 ou 22,50")
             
             c3, c4 = st.columns(2)
             nova_qtd = c3.number_input("Estoque Atual:", value=int(linha_atual['Quantidade']), step=1)
             novo_alarme = c4.number_input("Alarme:", value=int(linha_atual['Alarme']), step=1)
             
             if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
+                df_prod = df_prod.astype(object)
+                
                 df_prod.at[idx, 'Nome'] = novo_nome
                 df_prod.at[idx, 'Marca'] = nova_marca
-                # Salva o número puro
-                df_prod.at[idx, 'Custo'] = tratar_dinheiro(novo_custo)
-                df_prod.at[idx, 'Venda'] = tratar_dinheiro(novo_venda)
+                df_prod.at[idx, 'Custo'] = f"'{entrada_maquininha(novo_custo):.2f}"
+                df_prod.at[idx, 'Venda'] = f"'{entrada_maquininha(novo_venda):.2f}"
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
                 df_prod.at[idx, 'Alarme'] = novo_alarme
                 
@@ -371,9 +377,9 @@ with aba4:
                 else:
                     st.session_state.orcamento_itens.append({
                         "ID": dados_prod['ID'], "Produto": prod_selecionado, "Qtd": qtd_orc,
-                        "Custo_Un": tratar_dinheiro(dados_prod['Custo']), 
-                        "Preco_Un": tratar_dinheiro(dados_prod['Venda']),
-                        "Subtotal": tratar_dinheiro(dados_prod['Venda']) * qtd_orc
+                        "Custo_Un": ler_numero(dados_prod['Custo']), 
+                        "Preco_Un": ler_numero(dados_prod['Venda']),
+                        "Subtotal": ler_numero(dados_prod['Venda']) * qtd_orc
                     })
                     st.success("Adicionado!")
                 
@@ -392,8 +398,8 @@ with aba4:
             
             col_preco, col_sub, col_del = st.columns([3, 3, 2])
             
-            preco_edit_str = col_preco.text_input("Preço Un.", value=formatar_dinheiro(item['Preco_Un']).replace('R$ ', ''), key=f"preco_edit_{i}")
-            novo_preco_float = tratar_dinheiro(preco_edit_str)
+            preco_edit_str = col_preco.text_input("Preço Un.", value=f"{item['Preco_Un']:.2f}".replace('.', ','), key=f"preco_edit_{i}")
+            novo_preco_float = entrada_maquininha(preco_edit_str)
             
             novo_subtotal = novo_preco_float * item['Qtd']
             col_sub.markdown(f"<div style='margin-top:32px; font-size: 16px;'>Sub: <b>{formatar_dinheiro(novo_subtotal)}</b></div>", unsafe_allow_html=True)
@@ -452,8 +458,8 @@ with aba5:
         mes_selecionado = st.selectbox("Selecione o Mês:", meses)
         
         dados_mes = df_vendas[df_vendas['Mes_Ano'] == mes_selecionado]
-        faturamento = dados_mes['Venda_Total'].apply(tratar_dinheiro).sum()
-        custo = dados_mes['Custo_Total'].apply(tratar_dinheiro).sum()
+        faturamento = dados_mes['Venda_Total'].apply(ler_numero).sum()
+        custo = dados_mes['Custo_Total'].apply(ler_numero).sum()
         lucro = faturamento - custo
         
         st.metric("Faturamento Mensal", formatar_dinheiro(faturamento))
@@ -464,8 +470,7 @@ with aba5:
         st.write("---")
         
         dados_mes_calc = dados_mes.copy()
-        dados_mes_calc['Venda_Total_Num'] = dados_mes_calc['Venda_Total'].apply(tratar_dinheiro)
-        # Proteção extra para garantir que a quantidade seja lida como número
+        dados_mes_calc['Venda_Total_Num'] = dados_mes_calc['Venda_Total'].apply(ler_numero)
         dados_mes_calc['Quantidade_Num'] = dados_mes_calc['Quantidade'].apply(lambda x: int(float(str(x).strip() or 0)))
         
         ranking = dados_mes_calc.groupby('Nome_Produto').agg({
