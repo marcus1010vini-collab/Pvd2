@@ -10,33 +10,30 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="RODSTAR", page_icon="⚡", layout="centered")
 
-# --- LÓGICA DE MAQUININHA DE CARTÃO E TRADUTORES ---
+# --- LEITOR NATURAL DE DINHEIRO ---
 def ler_numero(valor):
-    """Lê os dados salvos no banco com segurança absoluta"""
+    """Permite digitar naturalmente (ex: 15 ou 22,50) e converte com segurança"""
     if isinstance(valor, (int, float)):
         return float(valor)
     v = str(valor).replace("'", "").replace('R$', '').replace(' ', '').strip()
     if not v: return 0.0
-    if '.' in v and ',' in v:
+    
+    # Se a pessoa digitou com vírgula (ex: 22,50)
+    if ',' in v and '.' in v:
         if v.rfind(',') > v.rfind('.'):
             v = v.replace('.', '').replace(',', '.')
         else:
             v = v.replace(',', '')
     elif ',' in v:
         v = v.replace(',', '.')
+        
     try:
         return float(v)
     except:
         return 0.0
 
-def entrada_maquininha(valor_digitado):
-    """O pedido do usuário: ignora pontos e vírgulas, divide direto por 100"""
-    numeros = ''.join(filter(str.isdigit, str(valor_digitado)))
-    if not numeros: return 0.0
-    return float(numeros) / 100
-
 def formatar_dinheiro(valor):
-    """Formata para a tela (R$ 1.234,50)"""
+    """Formata para a tela com o R$ e a vírgula no lugar certo"""
     v = ler_numero(valor)
     return f"R$ {v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
@@ -161,11 +158,12 @@ def processar_venda_callback(itens):
         novo_id_venda = 1 if df_vendas.empty else int(df_vendas['ID'].max()) + 1 + len(novas_vendas)
         custo_total = item['Custo_Un'] * item['Qtd']
         
+        # O TRUQUE DA ASPA: Salva protegido, mas com formato visual com vírgula para ficar bonito
         novas_vendas.append({
             'ID': novo_id_venda, 'Produto_ID': item['ID'], 'Nome_Produto': item['Produto'],
             'Quantidade': item['Qtd'], 
-            'Custo_Total': f"'{custo_total:.2f}", 
-            'Venda_Total': f"'{item['Subtotal']:.2f}", 
+            'Custo_Total': f"'{custo_total:.2f}".replace('.', ','), 
+            'Venda_Total': f"'{item['Subtotal']:.2f}".replace('.', ','), 
             'Mes_Ano': mes_atual
         })
     
@@ -243,8 +241,8 @@ with aba2:
         marca = st.text_input("Marca:")
         
         col1, col2 = st.columns(2)
-        preco_custo = col1.text_input("Custo:", placeholder="Ex: Digite 1500 para R$ 15,00")
-        preco_venda = col2.text_input("Venda:", placeholder="Ex: Digite 2250 para R$ 22,50")
+        preco_custo = col1.text_input("Custo (R$):", placeholder="Ex: 15 ou 22,50")
+        preco_venda = col2.text_input("Venda (R$):", placeholder="Ex: 15 ou 22,50")
         
         st.write("---")
         st.markdown("**Configurações de Estoque**")
@@ -257,8 +255,9 @@ with aba2:
                 df_prod = ler_produtos()
                 novo_id = 1 if df_prod.empty else int(df_prod['ID'].max()) + 1
                 
-                str_custo = f"'{entrada_maquininha(preco_custo):.2f}"
-                str_venda = f"'{entrada_maquininha(preco_venda):.2f}"
+                # O TRUQUE DA ASPA: Protege contra o Google Sheets, mas mantém a vírgula visível
+                str_custo = f"'{ler_numero(preco_custo):.2f}".replace('.', ',')
+                str_venda = f"'{ler_numero(preco_venda):.2f}".replace('.', ',')
                 
                 novo_produto = pd.DataFrame([{
                     'ID': novo_id, 'Nome': nome, 'Marca': marca, 
@@ -268,7 +267,7 @@ with aba2:
                 }])
                 df_atualizado = pd.concat([df_prod, novo_produto], ignore_index=True)
                 salvar_produtos(df_atualizado)
-                st.success("✅ Produto salvo com o preço exato!")
+                st.success("✅ Produto salvo com sucesso!")
                 st.rerun()
 
 # ================= ABA 3: EDITAR PRODUTO =================
@@ -289,12 +288,13 @@ with aba3:
             novo_nome = st.text_input("Nome do Produto:", value=str(linha_atual['Nome']))
             nova_marca = st.text_input("Marca:", value=str(linha_atual['Marca']))
             
-            custo_atual_formatado = f"{ler_numero(linha_atual['Custo']):.2f}".replace('.', ',')
-            venda_atual_formatada = f"{ler_numero(linha_atual['Venda']):.2f}".replace('.', ',')
+            # Traz o valor certinho (ex: 22,50) para a caixa de edição
+            custo_atual = f"{ler_numero(linha_atual['Custo']):.2f}".replace('.', ',')
+            venda_atual = f"{ler_numero(linha_atual['Venda']):.2f}".replace('.', ',')
             
             c1, c2 = st.columns(2)
-            novo_custo = c1.text_input("Custo:", value=custo_atual_formatado, help="Pode digitar 1500 ou 15,00")
-            novo_venda = c2.text_input("Venda:", value=venda_atual_formatada, help="Pode digitar 2250 ou 22,50")
+            novo_custo = c1.text_input("Custo (R$):", value=custo_atual)
+            novo_venda = c2.text_input("Venda (R$):", value=venda_atual)
             
             c3, c4 = st.columns(2)
             nova_qtd = c3.number_input("Estoque Atual:", value=int(linha_atual['Quantidade']), step=1)
@@ -305,13 +305,13 @@ with aba3:
                 
                 df_prod.at[idx, 'Nome'] = novo_nome
                 df_prod.at[idx, 'Marca'] = nova_marca
-                df_prod.at[idx, 'Custo'] = f"'{entrada_maquininha(novo_custo):.2f}"
-                df_prod.at[idx, 'Venda'] = f"'{entrada_maquininha(novo_venda):.2f}"
+                df_prod.at[idx, 'Custo'] = f"'{ler_numero(novo_custo):.2f}".replace('.', ',')
+                df_prod.at[idx, 'Venda'] = f"'{ler_numero(novo_venda):.2f}".replace('.', ',')
                 df_prod.at[idx, 'Quantidade'] = nova_qtd
                 df_prod.at[idx, 'Alarme'] = novo_alarme
                 
                 salvar_produtos(df_prod)
-                st.success("✅ Produto atualizado com o preço exato!")
+                st.success("✅ Produto atualizado!")
                 st.rerun()
                 
         st.write("---")
@@ -398,8 +398,9 @@ with aba4:
             
             col_preco, col_sub, col_del = st.columns([3, 3, 2])
             
+            # Caixa de texto livre também no carrinho
             preco_edit_str = col_preco.text_input("Preço Un.", value=f"{item['Preco_Un']:.2f}".replace('.', ','), key=f"preco_edit_{i}")
-            novo_preco_float = entrada_maquininha(preco_edit_str)
+            novo_preco_float = ler_numero(preco_edit_str)
             
             novo_subtotal = novo_preco_float * item['Qtd']
             col_sub.markdown(f"<div style='margin-top:32px; font-size: 16px;'>Sub: <b>{formatar_dinheiro(novo_subtotal)}</b></div>", unsafe_allow_html=True)
